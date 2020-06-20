@@ -22,6 +22,8 @@
 // SOFTWARE.
 
 using System;
+using System.Collections.Generic;
+using ClipperLib;
 using DeusaldSharp;
 
 namespace DeusaldNav2D
@@ -30,18 +32,19 @@ namespace DeusaldNav2D
     {
         #region Variables
 
-        internal event EventHandler DirtyFlagChanged;
-        
-        internal readonly Vector2[] obstaclePoints;
+        internal event EventHandler DirtyFlagEnabled;
 
-        private Vector2 _Position;
-        private float   _Rotation;
-        private float   _ExtraOffset;
-        private bool    _IsDirty;
-        private bool    _IsExtendDirty;
+        internal Vector2[] obstaclePoints;
+
+        private Vector2        _Position;
+        private float          _Rotation;
+        private float          _ExtraOffset;
+        private bool           _IsDirty;
+        private bool           _IsExtendDirty;
+        private Vector2[]      _ExtendedPoints;
+        private List<IntPoint> _EnterExtendPoints;
 
         private readonly Vector2[] _OriginalPoints;
-        private readonly Vector2[] _ExtendedPoints;
         private readonly Nav2D     _Nav2D;
 
         #endregion Variables
@@ -55,7 +58,9 @@ namespace DeusaldNav2D
             private set
             {
                 _IsDirty = value;
-                DirtyFlagChanged?.Invoke(this, EventArgs.Empty);
+
+                if (value)
+                    DirtyFlagEnabled?.Invoke(this, EventArgs.Empty);
             }
         }
 
@@ -101,21 +106,23 @@ namespace DeusaldNav2D
 
         internal Obstacle(Vector2[] originalPoints, Vector2 position, float rotation, float extraOffset, Nav2D nav2D)
         {
-            _OriginalPoints = originalPoints;
-            _ExtendedPoints = new Vector2[originalPoints.Length];
-            obstaclePoints  = new Vector2[originalPoints.Length];
-            _Nav2D          = nav2D;
-            _Position       = position;
-            _Rotation       = rotation;
-            _ExtraOffset    = extraOffset;
-            _IsDirty        = true;
-            _IsExtendDirty  = true;
+            _OriginalPoints    = originalPoints;
+            _ExtendedPoints    = new Vector2[originalPoints.Length];
+            obstaclePoints     = new Vector2[originalPoints.Length];
+            _EnterExtendPoints = new List<IntPoint>(_OriginalPoints.Length);
+            _Nav2D             = nav2D;
+            _Position          = position;
+            _Rotation          = rotation;
+            _ExtraOffset       = extraOffset;
+            _IsDirty           = true;
+            _IsExtendDirty     = true;
 
             if (originalPoints.Length < 3)
                 throw new Exception("Can't create polygon shape with less than 3 vertex!");
 
             CheckIfCounterClockWise();
             CheckIfConvex();
+            TransformExtendPoints();
             RefreshObstacle();
         }
 
@@ -136,6 +143,12 @@ namespace DeusaldNav2D
         #endregion Public Methods
 
         #region Private Methods
+
+        private void TransformExtendPoints()
+        {
+            foreach (var point in _OriginalPoints)
+                _EnterExtendPoints.Add(_Nav2D.ParseToIntPoint(point));
+        }
 
         private void CheckIfCounterClockWise()
         {
@@ -167,7 +180,7 @@ namespace DeusaldNav2D
                 int c = (b + 1) % _OriginalPoints.Length;
 
                 float crossProduct = CrossProductLength(_OriginalPoints[a].x, _OriginalPoints[a].y,
-                    _OriginalPoints[b].x,                                     _OriginalPoints[b].y, _OriginalPoints[c].x,
+                    _OriginalPoints[b].x, _OriginalPoints[b].y, _OriginalPoints[c].x,
                     _OriginalPoints[c].y);
 
                 if (crossProduct < 0)
@@ -191,57 +204,8 @@ namespace DeusaldNav2D
 
         private void RebuildExtendPoints()
         {
-            float distance = _Nav2D.AgentRadius + _ExtraOffset;
-
-            for (int i = 0; i < _OriginalPoints.Length; ++i)
-            {
-                // get this point (pt1), the point before it
-                // (pt0) and the point that follows it (pt2)
-                Vector2 pt0 = _OriginalPoints[i > 0 ? i - 1 : _OriginalPoints.Length - 1];
-                Vector2 pt1 = _OriginalPoints[i];
-                Vector2 pt2 = _OriginalPoints[i < _OriginalPoints.Length - 1 ? i + 1 : 0];
-
-                // find the line vectors of the lines going
-                // into the current point
-                Vector2 v01 = pt1 - pt0;
-                Vector2 v12 = pt2 - pt1;
-
-                // find the normals of the two lines, multiplied
-                // to the distance that polygon should inflate
-                Vector2 d01 = (-v01.Skew).Normalized * distance;
-                Vector2 d12 = (-v12.Skew).Normalized * distance;
-
-                // use the normals to find two points on the
-                // lines parallel to the polygon lines
-                Vector2 ptx0  = pt0 + d01;
-                Vector2 ptx10 = pt1 + d01;
-                Vector2 ptx12 = pt1 + d12;
-                Vector2 ptx2  = pt2 + d12;
-
-                // find the intersection of the two lines, and
-                // add it to the expanded polygon
-                _ExtendedPoints[i] = Intersect(ptx0, ptx10, ptx12, ptx2);
-            }
-
+            _Nav2D.ExtendThePolygon(ref _EnterExtendPoints, ref _ExtendedPoints, _ExtraOffset);
             _IsExtendDirty = false;
-        }
-
-        private Vector2 Intersect(Vector2 lineOneBegin, Vector2 lineOneEnd, Vector2 lineTwoBegin, Vector2 lineTwoEnd)
-        {
-            float a1 = lineOneEnd.x - lineOneBegin.x;
-            float b1 = lineTwoBegin.x - lineTwoEnd.x;
-            float c1 = lineTwoBegin.x - lineOneEnd.x;
-
-            float a2 = lineOneEnd.y - lineOneBegin.y;
-            float b2 = lineTwoBegin.y - lineTwoEnd.y;
-            float c2 = lineTwoBegin.y - lineOneEnd.y;
-
-            float t = (b1 * c2 - b2 * c1) / (a2 * b1 - a1 * b2);
-
-            float x = lineOneBegin.x + t * (lineOneEnd.x - lineOneBegin.x);
-            float y = lineOneBegin.y + t * (lineOneEnd.y - lineOneBegin.y);
-
-            return new Vector2(x, y);
         }
 
         private void RebuildObstaclePoints()
@@ -251,6 +215,9 @@ namespace DeusaldNav2D
             float minY = float.MaxValue;
             float maxY = float.MinValue;
 
+            if (obstaclePoints.Length != _ExtendedPoints.Length)
+                obstaclePoints = new Vector2[_ExtendedPoints.Length];
+            
             for (int i = 0; i < _ExtendedPoints.Length; ++i)
             {
                 Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
