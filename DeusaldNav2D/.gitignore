@@ -155,4 +155,4 @@ $RECYCLE.BIN/
 packages
 
 # Ignore project specific:
-SharpBox2D/SharpBox2D/Test.cs
+/DeusaldNav2D/Test.cs
