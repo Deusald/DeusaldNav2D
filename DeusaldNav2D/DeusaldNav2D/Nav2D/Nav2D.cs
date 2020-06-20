@@ -97,6 +97,15 @@ namespace DeusaldNav2D
             return newObstacle;
         }
 
+        public Obstacle AddObstacle(float radius, Vector2 position, float extraOffset = 0f)
+        {
+            Vector2[] points      = GetHexagonPoints(radius);
+            Obstacle  newObstacle = new Obstacle(points, position, 0f, extraOffset, this);
+            _Obstacles.Add(newObstacle);
+            newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
+            return newObstacle;
+        }
+
         internal IntPoint ParseToIntPoint(Vector2 vector2)
         {
             int x = (int) MathF.Round(vector2.x * (float) _Accuracy);
@@ -134,6 +143,24 @@ namespace DeusaldNav2D
         private void MarkObstaclesDirty(object sender, EventArgs eventArgs)
         {
             _AreObstaclesDirty = true;
+        }
+
+        private Vector2[] GetHexagonPoints(float radius)
+        {
+            const int   hexagonPoints = 6;
+            const float sqrt3         = 1.73f;
+            Vector2     point         = Vector2.Up * (2f * radius / sqrt3);
+            Vector2[]   result        = new Vector2[hexagonPoints];
+            point     = Vector2.Rotate(30f * MathUtils.DegToRad, point);
+            result[0] = point;
+
+            for (int i = 1; i < hexagonPoints; ++i)
+            {
+                point     = Vector2.Rotate(60f * MathUtils.DegToRad, point);
+                result[i] = point;
+            }
+
+            return result;
         }
 
         #endregion Private Methods
