@@ -9,6 +9,7 @@ namespace DeusaldNav2DTest
 
         [SerializeField] private MainNav2D _MainNav2D;
         [SerializeField] private Vector2[] _Points;
+        [SerializeField] private float     _Radius;
         [SerializeField] private float     _ExtraOffset;
         [SerializeField] private Vector2   _Position;
         [SerializeField] private float     _Rotation;
@@ -29,8 +30,12 @@ namespace DeusaldNav2DTest
             for (int i = 0; i < points.Length; ++i)
                 points[i] = new DeusaldSharp.Vector2(_Points[i].x, _Points[i].y);
 
-            _Obstacle            = _MainNav2D.Nav2D.AddObstacle(points, new DeusaldSharp.Vector2(_Position.x, _Position.y),
-                 _Rotation, _ExtraOffset);
+            if (_Points.Length == 0)
+                _Obstacle = _MainNav2D.Nav2D.AddObstacle(_Radius, new DeusaldSharp.Vector2(_Position.x, _Position.y));
+            else
+                _Obstacle = _MainNav2D.Nav2D.AddObstacle(points, new DeusaldSharp.Vector2(_Position.x, _Position.y),
+                    _Rotation, _ExtraOffset);
+
             _PreviousExtraOffset = _ExtraOffset;
             _PreviousPosition    = _Position;
             _PreviousRotation    = _Rotation;
