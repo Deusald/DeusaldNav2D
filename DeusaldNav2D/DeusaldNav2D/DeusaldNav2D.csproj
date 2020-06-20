@@ -1,7 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <TargetFramework>net48</TargetFramework>
     </PropertyGroup>
+
+    <ItemGroup>
+      <Folder Include="Dlls" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Reference Include="DeusaldSharp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
+        <HintPath>Dlls\net48\DeusaldSharp.dll</HintPath>
+      </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Clipper" Version="6.4.0" />
+    </ItemGroup>
 
 </Project>
