@@ -44,6 +44,8 @@ namespace DeusaldNav2D
             FivePoints  = 100000
         }
 
+        public class ConnectionData { }
+
         #endregion Types
 
         #region Variables
@@ -57,19 +59,30 @@ namespace DeusaldNav2D
         private bool                 _AreSurfacesDirty;
         private List<List<IntPoint>> _ExitExtendPoints;
         private uint                 _NextGroupId;
+        private uint                 _ConnectionOrderId;
 
-        private readonly Vector2             _LeftBottomMapCorner;
-        private readonly Vector2             _RightUpperMapCorner;
-        private readonly List<NavElement>    _Obstacles;
-        private readonly List<NavElement>    _Surfaces;
-        private readonly Accuracy            _Accuracy;
-        private readonly ClipperOffset       _ClipperOffset;
-        private readonly Queue<NavElement>   _ElementsToRebuildGroups;
-        private readonly HashSet<NavElement> _ElementsOnRebuildGroupsQueue;
+        private readonly Vector2                                               _LeftBottomMapCorner;
+        private readonly Vector2                                               _RightUpperMapCorner;
+        private readonly List<NavElement>                                      _Obstacles;
+        private readonly List<NavElement>                                      _Surfaces;
+        private readonly Accuracy                                              _Accuracy;
+        private readonly ClipperOffset                                         _ClipperOffset;
+        private readonly Queue<NavElement>                                     _ElementsToRebuildGroups;
+        private readonly HashSet<NavElement>                                   _ElementsOnRebuildGroupsQueue;
+        private readonly List<NavPoint>                                        _NavPoints;
+        private readonly Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData> _Connections;
 
         #endregion Variables
 
         #region Properties
+
+        #if DEBUG
+
+        public List<NavElement> DebugObstacles => _Obstacles;
+        public List<NavElement> DebugSurfaces  => _Surfaces;
+        public List<NavPoint>   DebugNavPoints => _NavPoints;
+
+        #endif
 
         public float        AgentRadius         { get; }
         public Vector2      LeftBottomMapCorner => _LeftBottomMapCorner;
@@ -97,7 +110,9 @@ namespace DeusaldNav2D
             elementsGroups                = new Dictionary<uint, ElementsGroup>();
             _ElementsToRebuildGroups      = new Queue<NavElement>();
             _ElementsOnRebuildGroupsQueue = new HashSet<NavElement>();
+            _Connections                  = new Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData>();
             elementsGroupToRebuild        = new List<uint>();
+            _NavPoints                    = new List<NavPoint>();
             clipper                       = new Clipper();
             polyTree                      = new PolyTree();
             QuadTree                      = new QuadTreeRectF<NavElement>(GetRectFromMinMax(leftBottomMapCorner, rightUpperMapCorner));
@@ -136,11 +151,13 @@ namespace DeusaldNav2D
             }
 
             elementsGroupToRebuild.Clear();
+
+            RebuildNavPoints();
         }
 
         public NavElement AddObstacle(Vector2[] points, Vector2 position, float rotation, float extraOffset = 0f)
         {
-            NavElement newObstacle = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Obstacle, 0f);
+            NavElement newObstacle = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Obstacle, 1f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
             return newObstacle;
@@ -149,7 +166,7 @@ namespace DeusaldNav2D
         public NavElement AddObstacle(float radius, Vector2 position, float extraOffset = 0f)
         {
             Vector2[]  points      = GetHexagonPoints(radius);
-            NavElement newObstacle = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Obstacle, 0f);
+            NavElement newObstacle = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Obstacle, 1f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
             return newObstacle;
@@ -248,6 +265,75 @@ namespace DeusaldNav2D
             }
 
             return result;
+        }
+
+        private void AddToConnectionDictionary(NavPoint first, NavPoint second)
+        {
+            if (first.Id < second.Id)
+                _Connections.Add(new Tuple<NavPoint, NavPoint>(first, second), new ConnectionData());
+            else
+                _Connections.Add(new Tuple<NavPoint, NavPoint>(second, first), new ConnectionData());
+        }
+
+        private void RebuildNavPoints()
+        {
+            _NavPoints.Clear();
+            _Connections.Clear();
+            _ConnectionOrderId = 0;
+            CreateEdgePoints();
+        }
+
+        private void CreateEdgePoints()
+        {
+            foreach (var element in elementsGroups.Values)
+            {
+                for (var i = 0; i < element.NavSurfaces.Count; ++i)
+                {
+                    NavShape          surface             = element.NavSurfaces[i];
+                    HashSet<NavPoint> forbiddenConnection = new HashSet<NavPoint>();
+
+                    FillTheEdgePoints(ref surface, ref forbiddenConnection);
+                }
+
+                Queue<NavShape>                         obstacles                 = new Queue<NavShape>(element.NavObstacles);
+                Dictionary<NavShape, HashSet<NavPoint>> parentForbiddenConnection = new Dictionary<NavShape, HashSet<NavPoint>>();
+
+                while (obstacles.Count != 0)
+                {
+                    NavShape          obstacle            = obstacles.Dequeue();
+                    HashSet<NavPoint> forbiddenConnection = obstacle.Hole ? parentForbiddenConnection[obstacle.Parent] : new HashSet<NavPoint>();
+                    
+                    FillTheEdgePoints(ref obstacle, ref forbiddenConnection);
+                    
+                    if (!obstacle.Hole)
+                        parentForbiddenConnection.Add(obstacle, forbiddenConnection);
+
+                    foreach (var child in obstacle.Children)
+                        obstacles.Enqueue(child);
+                }
+            }
+        }
+
+        private void FillTheEdgePoints(ref NavShape navShape, ref HashSet<NavPoint> forbiddenConnection)
+        {
+            NavPoint lastPoint     = new NavPoint(_ConnectionOrderId++, navShape.Points[navShape.Points.Length - 1], forbiddenConnection);
+            NavPoint previousPoint = lastPoint;
+
+            for (int i = 0; i < navShape.Points.Length - 1; ++i)
+            {
+                NavPoint point = new NavPoint(_ConnectionOrderId++, navShape.Points[i], forbiddenConnection);
+
+                point.Neighbours.Add(previousPoint);
+                previousPoint.Neighbours.Add(point);
+                AddToConnectionDictionary(previousPoint, point);
+                forbiddenConnection.Add(point);
+                previousPoint = point;
+            }
+
+            previousPoint.Neighbours.Add(lastPoint);
+            lastPoint.Neighbours.Add(previousPoint);
+            AddToConnectionDictionary(previousPoint, lastPoint);
+            forbiddenConnection.Add(lastPoint);
         }
 
         #endregion Private Methods

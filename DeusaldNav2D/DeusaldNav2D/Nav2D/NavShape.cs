@@ -34,13 +34,14 @@ namespace DeusaldNav2D
         public Vector2[]       Points   { get; }
         public bool            Hole     { get; }
         public List<NavShape>  Children { get; }
+        public NavShape        Parent   { get; }
         public NavElement.Type NavType  { get; }
 
         #endregion Properties
 
         #region Init Methods
 
-        public NavShape(Nav2D nav2D, List<IntPoint> points, bool hole, List<PolyNode> children, NavElement.Type navType)
+        public NavShape(Nav2D nav2D, List<IntPoint> points, bool hole, List<PolyNode> children, NavShape parent, NavElement.Type navType)
         {
             Points = new Vector2[points.Count];
 
@@ -49,8 +50,9 @@ namespace DeusaldNav2D
 
             Hole    = hole;
             NavType = navType;
+            Parent  = parent;
 
-            if (children.Count == 0)
+            if (children == null || children.Count == 0)
             {
                 Children = null;
                 return;
@@ -59,7 +61,7 @@ namespace DeusaldNav2D
             Children = new List<NavShape>();
 
             foreach (var child in children)
-                Children.Add(new NavShape(nav2D, child.Contour, child.IsHole, child.Childs, navType));
+                Children.Add(new NavShape(nav2D, child.Contour, child.IsHole, child.Childs, this, navType));
         }
 
         public NavShape(Vector2[] points, NavElement.Type navType)
@@ -67,6 +69,7 @@ namespace DeusaldNav2D
             Points   = points;
             Hole     = false;
             Children = null;
+            Parent   = null;
             NavType  = navType;
         }
 

@@ -21,10 +21,38 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+using System.Collections.Generic;
+using DeusaldSharp;
+
 namespace DeusaldNav2D
 {
     public class NavPoint
     {
+        #region Properties
+
+        #if DEBUG
         
+        public List<NavPoint> DebugNeighbours => Neighbours;
+        
+        #endif
+        
+        internal uint              Id                   { get; }
+        public   Vector2           Position             { get; }
+        internal HashSet<NavPoint> ForbiddenConnections { get; }
+        internal List<NavPoint>    Neighbours           { get; }
+
+        #endregion Properties
+
+        #region Init Methods
+
+        internal NavPoint(uint id, Vector2 position, HashSet<NavPoint> forbiddenConnections)
+        {
+            Id                   = id;
+            Position             = position;
+            ForbiddenConnections = forbiddenConnections;
+            Neighbours           = new List<NavPoint>();
+        }
+
+        #endregion Init Methods
     }
 }

@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 using System.Collections.Generic;
+using System.Linq;
 using ClipperLib;
 
 namespace DeusaldNav2D
@@ -94,19 +95,33 @@ namespace DeusaldNav2D
 
         public void Rebuild()
         {
-            List<List<IntPoint>> obstaclesIntPoints = new List<List<IntPoint>>();
             NavObstacles.Clear();
             NavSurfaces.Clear();
 
-            List<NavElement> obstacles = new List<NavElement>(_Obstacles);
-            List<NavElement> surfaces  = new List<NavElement>(_Surfaces);
+            if (_Obstacles.Count == 1 && _Surfaces.Count == 0)
+            {
+                NavObstacles.Add(new NavShape(_Obstacles.First().navElementPoints, NavElement.Type.Obstacle));
+                return;
+            }
+
+            if (_Obstacles.Count == 0 && _Surfaces.Count > 0)
+            {
+                foreach (var surface in _Surfaces)
+                    NavSurfaces.Add(new NavShape(surface.navElementPoints, NavElement.Type.Surface));
+
+                return;
+            }
+
+            List<NavElement>     obstacles          = new List<NavElement>(_Obstacles);
+            List<NavElement>     surfaces           = new List<NavElement>(_Surfaces);
+            List<List<IntPoint>> obstaclesIntPoints = new List<List<IntPoint>>();
 
             foreach (var obstacle in obstacles)
                 obstaclesIntPoints.Add(obstacle.intNavElementPoints);
 
-            if (obstaclesIntPoints.Count > 0)
+            if (_Obstacles.Count > 0)
             {
-                if (obstaclesIntPoints.Count == 1)
+                if (_Obstacles.Count == 1)
                     NavObstacles.Add(new NavShape(obstacles[0].navElementPoints, NavElement.Type.Obstacle));
                 else
                 {
@@ -119,22 +134,14 @@ namespace DeusaldNav2D
                     if (_Nav2D.polyTree.IsHole)
                     {
                         foreach (var child in _Nav2D.polyTree.Childs)
-                            NavObstacles.Add(new NavShape(_Nav2D, child.Contour, child.IsHole, child.Childs, NavElement.Type.Obstacle));
+                            NavObstacles.Add(new NavShape(_Nav2D, child.Contour, child.IsHole, child.Childs, null, NavElement.Type.Obstacle));
                     }
                     else // We got one big containing everyone
-                        NavObstacles.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, _Nav2D.polyTree.Childs, NavElement.Type.Obstacle));
+                        NavObstacles.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, _Nav2D.polyTree.Childs, null, NavElement.Type.Obstacle));
                 }
             }
-            
-            if (surfaces.Count == 0) return;
 
-            if (obstacles.Count == 0)
-            {
-                foreach (var surface in surfaces)
-                    NavSurfaces.Add(new NavShape(surface.navElementPoints, NavElement.Type.Surface));
-                
-                return;
-            }
+            if (surfaces.Count == 0) return;
 
             foreach (var surface in surfaces)
             {
@@ -143,15 +150,15 @@ namespace DeusaldNav2D
                 _Nav2D.clipper.AddPath(surface.intNavElementPoints, PolyType.ptSubject, true);
                 _Nav2D.clipper.AddPaths(obstaclesIntPoints, PolyType.ptClip, true);
                 _Nav2D.clipper.Execute(ClipType.ctDifference, _Nav2D.polyTree);
-                
+
                 // We got more separated ones
                 if (_Nav2D.polyTree.IsHole)
                 {
                     foreach (var child in _Nav2D.polyTree.Childs)
-                        NavObstacles.Add(new NavShape(_Nav2D, child.Contour, child.IsHole, child.Childs, NavElement.Type.Surface));
+                        NavSurfaces.Add(new NavShape(_Nav2D, child.Contour, false, null,  null,NavElement.Type.Surface));
                 }
                 else // We got one big containing everyone
-                    NavObstacles.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, _Nav2D.polyTree.Childs, NavElement.Type.Surface));
+                    NavSurfaces.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, null, null, NavElement.Type.Surface));
             }
         }
 
