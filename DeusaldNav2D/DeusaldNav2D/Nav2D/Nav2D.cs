@@ -23,8 +23,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using ClipperLib;
 using DeusaldSharp;
+using QuadTrees;
 
 namespace DeusaldNav2D
 {
@@ -46,21 +48,34 @@ namespace DeusaldNav2D
 
         #region Variables
 
-        private Vector2              _LeftBottomMapCorner;
-        private Vector2              _RightUpperMapCorner;
-        private bool                 _AreObstaclesDirty;
-        private List<List<IntPoint>> _ExitExtendPoints;
+        internal readonly Dictionary<uint, ElementsGroup> elementsGroups;
 
-        private readonly List<Obstacle> _Obstacles;
-        private readonly Accuracy       _Accuracy;
-        private readonly ClipperOffset  _ClipperOffset;
+        private bool                 _AreObstaclesDirty;
+        private bool                 _AreSurfacesDirty;
+        private List<List<IntPoint>> _ExitExtendPoints;
+        private uint                 _NextGroupId;
+
+        private readonly Vector2             _LeftBottomMapCorner;
+        private readonly Vector2             _RightUpperMapCorner;
+        private readonly List<NavElement>    _Obstacles;
+        private readonly List<NavElement>    _Surfaces;
+        private readonly Accuracy            _Accuracy;
+        private readonly ClipperOffset       _ClipperOffset;
+        private readonly Queue<NavElement>   _ElementsToRebuildGroups;
+        private readonly HashSet<NavElement> _ElementsOnRebuildGroupsQueue;
 
         #endregion Variables
 
         #region Properties
 
-        public float      AgentRadius { get; }
-        public Obstacle[] Obstacles   => _Obstacles.ToArray();
+        public float        AgentRadius         { get; }
+        public Vector2      LeftBottomMapCorner => _LeftBottomMapCorner;
+        public Vector2      RightUpperMapCorner => _RightUpperMapCorner;
+        public NavElement[] Obstacles           => _Obstacles.ToArray();
+        public NavElement[] Surfaces            => _Surfaces.ToArray();
+
+        internal QuadTreeRectF<NavElement> QuadTree    { get; }
+        internal uint                      NextGroupId => _NextGroupId++;
 
         #endregion Properties
 
@@ -68,13 +83,19 @@ namespace DeusaldNav2D
 
         public Nav2D(Vector2 leftBottomMapCorner, Vector2 rightUpperMapCorner, float agentRadius, Accuracy accuracy)
         {
-            _LeftBottomMapCorner = leftBottomMapCorner;
-            _RightUpperMapCorner = rightUpperMapCorner;
-            AgentRadius          = agentRadius;
-            _Obstacles           = new List<Obstacle>();
-            _ClipperOffset       = new ClipperOffset();
-            _ExitExtendPoints    = new List<List<IntPoint>>();
-            _Accuracy            = accuracy;
+            _LeftBottomMapCorner          = leftBottomMapCorner;
+            _RightUpperMapCorner          = rightUpperMapCorner;
+            AgentRadius                   = agentRadius;
+            _NextGroupId                  = 1;
+            _Obstacles                    = new List<NavElement>();
+            _Surfaces                     = new List<NavElement>();
+            _ClipperOffset                = new ClipperOffset();
+            _ExitExtendPoints             = new List<List<IntPoint>>();
+            elementsGroups                = new Dictionary<uint, ElementsGroup>();
+            _ElementsToRebuildGroups      = new Queue<NavElement>();
+            _ElementsOnRebuildGroupsQueue = new HashSet<NavElement>();
+            QuadTree                      = new QuadTreeRectF<NavElement>(GetRectFromMinMax(leftBottomMapCorner, rightUpperMapCorner));
+            _Accuracy                     = accuracy;
         }
 
         #endregion Init Methods
@@ -83,27 +104,56 @@ namespace DeusaldNav2D
 
         public void Update()
         {
-            if (!_AreObstaclesDirty) return;
+            if (!_AreObstaclesDirty && !_AreSurfacesDirty) return;
 
-            foreach (var obstacle in _Obstacles)
-                obstacle.RefreshObstacle();
+            if (_AreObstaclesDirty)
+            {
+                foreach (var obstacle in _Obstacles)
+                    obstacle.RefreshNavElement();
+            }
+
+            if (_AreSurfacesDirty)
+            {
+                foreach (var surface in _Surfaces)
+                    surface.RefreshNavElement();
+            }
+
+            while (_ElementsToRebuildGroups.Count != 0)
+                _ElementsToRebuildGroups.Dequeue().RebuildTheElementGroup();
         }
 
-        public Obstacle AddObstacle(Vector2[] points, Vector2 position, float rotation, float extraOffset = 0f)
+        public NavElement AddObstacle(Vector2[] points, Vector2 position, float rotation, float extraOffset = 0f)
         {
-            Obstacle newObstacle = new Obstacle(points, position, rotation, extraOffset, this);
+            NavElement newObstacle = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Obstacle, 0f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
             return newObstacle;
         }
 
-        public Obstacle AddObstacle(float radius, Vector2 position, float extraOffset = 0f)
+        public NavElement AddObstacle(float radius, Vector2 position, float extraOffset = 0f)
         {
-            Vector2[] points      = GetHexagonPoints(radius);
-            Obstacle  newObstacle = new Obstacle(points, position, 0f, extraOffset, this);
+            Vector2[]  points      = GetHexagonPoints(radius);
+            NavElement newObstacle = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Obstacle, 0f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
             return newObstacle;
+        }
+        
+        public NavElement AddSurface(Vector2[] points, Vector2 position, float rotation, float cost, float extraOffset = 0f)
+        {
+            NavElement newSurface = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Surface, cost);
+            _Surfaces.Add(newSurface);
+            newSurface.DirtyFlagEnabled += MarkObstaclesDirty;
+            return newSurface;
+        }
+
+        public NavElement AddSurface(float radius, Vector2 position, float cost, float extraOffset = 0f)
+        {
+            Vector2[]  points      = GetHexagonPoints(radius);
+            NavElement newSurface = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Surface, cost);
+            _Surfaces.Add(newSurface);
+            newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
+            return newSurface;
         }
 
         internal IntPoint ParseToIntPoint(Vector2 vector2)
@@ -136,6 +186,22 @@ namespace DeusaldNav2D
                 extendedPoints[i] = ParseToVector2(_ExitExtendPoints[0][i]);
         }
 
+        internal RectangleF GetRectFromMinMax(Vector2 leftBottom, Vector2 rightTop)
+        {
+            float x      = (leftBottom.x + rightTop.x) / 2f;
+            float y      = (leftBottom.y + rightTop.y) / 2f;
+            float width  = MathF.Abs(leftBottom.x - rightTop.x);
+            float height = MathF.Abs(leftBottom.y - rightTop.y);
+            return new RectangleF(x, y, width, height);
+        }
+
+        internal void AddElementOnRebuildGroupsQueue(NavElement element)
+        {
+            if (_ElementsOnRebuildGroupsQueue.Contains(element)) return;
+            _ElementsOnRebuildGroupsQueue.Add(element);
+            _ElementsToRebuildGroups.Enqueue(element);
+        }
+
         #endregion Public Methods
 
         #region Private Methods
@@ -143,6 +209,11 @@ namespace DeusaldNav2D
         private void MarkObstaclesDirty(object sender, EventArgs eventArgs)
         {
             _AreObstaclesDirty = true;
+        }
+        
+        private void MarkSurfacesDirty(object sender, EventArgs eventArgs)
+        {
+            _AreSurfacesDirty = true;
         }
 
         private Vector2[] GetHexagonPoints(float radius)

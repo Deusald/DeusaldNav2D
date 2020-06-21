@@ -23,18 +23,43 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using ClipperLib;
 using DeusaldSharp;
+using QuadTrees.QTreeRectF;
 
 namespace DeusaldNav2D
 {
-    public class Obstacle
+    public class NavElement : IRectFQuadStorable
     {
+        #region Types
+
+        public enum Type
+        {
+            Obstacle,
+            Surface
+        }
+
+        internal readonly struct CostChangedData
+        {
+            public readonly float previousCost;
+            public readonly float newCost;
+
+            public CostChangedData(float previousCost, float newCost)
+            {
+                this.previousCost = previousCost;
+                this.newCost      = newCost;
+            }
+        }
+
+        #endregion Types
+
         #region Variables
 
-        internal event EventHandler DirtyFlagEnabled;
+        internal event EventHandler                  DirtyFlagEnabled;
+        internal event EventHandler<CostChangedData> CostChanged;
 
-        internal Vector2[] obstaclePoints;
+        internal Vector2[] navElementPoints;
 
         private Vector2        _Position;
         private float          _Rotation;
@@ -43,6 +68,9 @@ namespace DeusaldNav2D
         private bool           _IsExtendDirty;
         private Vector2[]      _ExtendedPoints;
         private List<IntPoint> _EnterExtendPoints;
+        private bool           _InQuadTree;
+        private uint           _ElementGroupId;
+        private float          _Cost;
 
         private readonly Vector2[] _OriginalPoints;
         private readonly Nav2D     _Nav2D;
@@ -64,7 +92,7 @@ namespace DeusaldNav2D
             }
         }
 
-        public Vector2[] ObstaclePoints => (Vector2[]) obstaclePoints.Clone();
+        public Vector2[] NavElementPoints => (Vector2[]) navElementPoints.Clone();
 
         public Vector2 Position
         {
@@ -97,25 +125,63 @@ namespace DeusaldNav2D
             }
         }
 
-        public Vector2 BottomBoundingBox { get; private set; }
-        public Vector2 TopBoundingBox    { get; private set; }
+        public float Cost
+        {
+            get => _Cost;
+            set
+            {
+                CostChanged?.Invoke(this, new CostChangedData(_Cost, value));
+                _Cost = value;
+            }
+        }
+
+        public Vector2    BottomBoundingBox { get; private set; }
+        public Vector2    TopBoundingBox    { get; private set; }
+        public RectangleF Rect              { get; private set; }
+        public Type       NavType           { get; }
+
+        internal uint ElementGroupId
+        {
+            get => _ElementGroupId;
+
+            set
+            {
+                if (_ElementGroupId == value) return;
+
+                if (_ElementGroupId != 0)
+                    _Nav2D.elementsGroups[_ElementGroupId].RemoveNavElement(this);
+
+                _ElementGroupId = value;
+
+                if (_ElementGroupId == 0) return;
+
+                if (!_Nav2D.elementsGroups.ContainsKey(_ElementGroupId))
+                    _Nav2D.elementsGroups.Add(_ElementGroupId, new ElementsGroup(_Nav2D, _ElementGroupId));
+
+                _Nav2D.elementsGroups[_ElementGroupId].AddElement(this);
+            }
+        }
 
         #endregion Properties
 
         #region Init Methods
 
-        internal Obstacle(Vector2[] originalPoints, Vector2 position, float rotation, float extraOffset, Nav2D nav2D)
+        internal NavElement(Vector2[] originalPoints, Vector2 position, float rotation, float extraOffset, Nav2D nav2D, Type type, float cost)
         {
             _OriginalPoints    = originalPoints;
             _ExtendedPoints    = new Vector2[originalPoints.Length];
-            obstaclePoints     = new Vector2[originalPoints.Length];
+            navElementPoints   = new Vector2[originalPoints.Length];
             _EnterExtendPoints = new List<IntPoint>(_OriginalPoints.Length);
             _Nav2D             = nav2D;
             _Position          = position;
             _Rotation          = rotation;
             _ExtraOffset       = extraOffset;
+            _Cost              = cost;
+            _ElementGroupId    = 0;
+            NavType            = type;
             _IsDirty           = true;
             _IsExtendDirty     = true;
+            _InQuadTree        = false;
 
             if (originalPoints.Length < 3)
                 throw new Exception("Can't create polygon shape with less than 3 vertex!");
@@ -123,21 +189,85 @@ namespace DeusaldNav2D
             CheckIfCounterClockWise();
             CheckIfConvex();
             TransformExtendPoints();
-            RefreshObstacle();
+            RefreshNavElement();
         }
 
         #endregion Init Methods
 
         #region Public Methods
 
-        public void RefreshObstacle()
+        internal void RefreshNavElement()
         {
             if (!_IsDirty) return;
 
             if (_IsExtendDirty)
                 RebuildExtendPoints();
 
-            RebuildObstaclePoints();
+            RebuildNavElementPoints();
+        }
+
+        internal void RebuildTheElementGroup()
+        {
+            if (ElementGroupId != 0)
+                _Nav2D.elementsGroups[ElementGroupId].DismantleGroup();
+
+            ElementGroupId = 0;
+            uint             commonId         = 0;
+            HashSet<uint>    collidedGroupIds = new HashSet<uint>();
+            List<NavElement> collidedElements = _Nav2D.QuadTree.GetObjects(Rect);
+
+            if (collidedElements.Count == 0)
+            {
+                ElementGroupId = _Nav2D.NextGroupId;
+                return;
+            }
+
+            foreach (var element in collidedElements)
+            {
+                if (element == this) continue;
+                if (element.ElementGroupId == 0) continue;
+                collidedGroupIds.Add(element.ElementGroupId);
+                commonId = element.ElementGroupId;
+            }
+
+            if (collidedGroupIds.Count == 0)
+            {
+                commonId       = _Nav2D.NextGroupId;
+                ElementGroupId = commonId;
+
+                foreach (var element in collidedElements)
+                {
+                    if (element == this) continue;
+                    element.ElementGroupId = commonId;
+                    _Nav2D.AddElementOnRebuildGroupsQueue(element);
+                }
+
+                return;
+            }
+
+            if (collidedGroupIds.Count == 1)
+            {
+                ElementGroupId = commonId;
+
+                foreach (var element in collidedElements)
+                {
+                    if (element == this) continue;
+                    element.ElementGroupId = commonId;
+                    _Nav2D.AddElementOnRebuildGroupsQueue(element);
+                }
+
+                return;
+            }
+
+            commonId       = _Nav2D.NextGroupId;
+            ElementGroupId = commonId;
+
+            foreach (var element in collidedElements)
+            {
+                if (element == this) continue;
+                element.ElementGroupId = commonId;
+                _Nav2D.AddElementOnRebuildGroupsQueue(element);
+            }
         }
 
         #endregion Public Methods
@@ -208,30 +338,40 @@ namespace DeusaldNav2D
             _IsExtendDirty = false;
         }
 
-        private void RebuildObstaclePoints()
+        private void RebuildNavElementPoints()
         {
             float minX = float.MaxValue;
             float maxX = float.MinValue;
             float minY = float.MaxValue;
             float maxY = float.MinValue;
 
-            if (obstaclePoints.Length != _ExtendedPoints.Length)
-                obstaclePoints = new Vector2[_ExtendedPoints.Length];
-            
+            if (navElementPoints.Length != _ExtendedPoints.Length)
+                navElementPoints = new Vector2[_ExtendedPoints.Length];
+
             for (int i = 0; i < _ExtendedPoints.Length; ++i)
             {
                 Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
                 Vector2 translated = _Position + rotated;
-                obstaclePoints[i] = translated;
-                minX              = MathF.Min(minX, translated.x);
-                maxX              = MathF.Max(maxX, translated.x);
-                minY              = MathF.Min(minY, translated.y);
-                maxY              = MathF.Max(maxY, translated.y);
+                navElementPoints[i] = translated;
+                minX                = MathF.Min(minX, translated.x);
+                maxX                = MathF.Max(maxX, translated.x);
+                minY                = MathF.Min(minY, translated.y);
+                maxY                = MathF.Max(maxY, translated.y);
             }
 
             BottomBoundingBox = new Vector2(minX, minY);
             TopBoundingBox    = new Vector2(maxX, maxY);
+            Rect              = _Nav2D.GetRectFromMinMax(BottomBoundingBox, TopBoundingBox);
 
+            if (_InQuadTree)
+                _Nav2D.QuadTree.Move(this);
+            else
+            {
+                _Nav2D.QuadTree.Add(this);
+                _InQuadTree = true;
+            }
+
+            _Nav2D.AddElementOnRebuildGroupsQueue(this);
             _IsDirty = false;
         }
 
