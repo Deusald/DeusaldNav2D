@@ -61,6 +61,8 @@ namespace DeusaldNav2D
 
         internal Vector2[] navElementPoints;
 
+        internal readonly List<IntPoint> intNavElementPoints;
+
         private Vector2        _Position;
         private float          _Rotation;
         private float          _ExtraOffset;
@@ -168,20 +170,21 @@ namespace DeusaldNav2D
 
         internal NavElement(Vector2[] originalPoints, Vector2 position, float rotation, float extraOffset, Nav2D nav2D, Type type, float cost)
         {
-            _OriginalPoints    = originalPoints;
-            _ExtendedPoints    = new Vector2[originalPoints.Length];
-            navElementPoints   = new Vector2[originalPoints.Length];
-            _EnterExtendPoints = new List<IntPoint>(_OriginalPoints.Length);
-            _Nav2D             = nav2D;
-            _Position          = position;
-            _Rotation          = rotation;
-            _ExtraOffset       = extraOffset;
-            _Cost              = cost;
-            _ElementGroupId    = 0;
-            NavType            = type;
-            _IsDirty           = true;
-            _IsExtendDirty     = true;
-            _InQuadTree        = false;
+            _OriginalPoints     = originalPoints;
+            _ExtendedPoints     = new Vector2[originalPoints.Length];
+            navElementPoints    = new Vector2[originalPoints.Length];
+            _EnterExtendPoints  = new List<IntPoint>(_OriginalPoints.Length);
+            intNavElementPoints = new List<IntPoint>();
+            _Nav2D              = nav2D;
+            _Position           = position;
+            _Rotation           = rotation;
+            _ExtraOffset        = extraOffset;
+            _Cost               = cost;
+            _ElementGroupId     = 0;
+            NavType             = type;
+            _IsDirty            = true;
+            _IsExtendDirty      = true;
+            _InQuadTree         = false;
 
             if (originalPoints.Length < 3)
                 throw new Exception("Can't create polygon shape with less than 3 vertex!");
@@ -219,6 +222,7 @@ namespace DeusaldNav2D
             if (collidedElements.Count == 0)
             {
                 ElementGroupId = _Nav2D.NextGroupId;
+                _Nav2D.elementsGroupToRebuild.Add(ElementGroupId);
                 return;
             }
 
@@ -234,6 +238,7 @@ namespace DeusaldNav2D
             {
                 commonId       = _Nav2D.NextGroupId;
                 ElementGroupId = commonId;
+                _Nav2D.elementsGroupToRebuild.Add(commonId);
 
                 foreach (var element in collidedElements)
                 {
@@ -248,6 +253,7 @@ namespace DeusaldNav2D
             if (collidedGroupIds.Count == 1)
             {
                 ElementGroupId = commonId;
+                _Nav2D.elementsGroupToRebuild.Add(commonId);
 
                 foreach (var element in collidedElements)
                 {
@@ -261,6 +267,7 @@ namespace DeusaldNav2D
 
             commonId       = _Nav2D.NextGroupId;
             ElementGroupId = commonId;
+            _Nav2D.elementsGroupToRebuild.Add(commonId);
 
             foreach (var element in collidedElements)
             {
@@ -371,6 +378,11 @@ namespace DeusaldNav2D
                 _InQuadTree = true;
             }
 
+            intNavElementPoints.Clear();
+
+            foreach (var point in navElementPoints)
+                intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
+            
             _Nav2D.AddElementOnRebuildGroupsQueue(this);
             _IsDirty = false;
         }

@@ -49,6 +49,9 @@ namespace DeusaldNav2D
         #region Variables
 
         internal readonly Dictionary<uint, ElementsGroup> elementsGroups;
+        internal readonly List<uint>                      elementsGroupToRebuild;
+        internal readonly Clipper                         clipper;
+        internal readonly PolyTree                        polyTree;
 
         private bool                 _AreObstaclesDirty;
         private bool                 _AreSurfacesDirty;
@@ -94,6 +97,9 @@ namespace DeusaldNav2D
             elementsGroups                = new Dictionary<uint, ElementsGroup>();
             _ElementsToRebuildGroups      = new Queue<NavElement>();
             _ElementsOnRebuildGroupsQueue = new HashSet<NavElement>();
+            elementsGroupToRebuild        = new List<uint>();
+            clipper                       = new Clipper();
+            polyTree                      = new PolyTree();
             QuadTree                      = new QuadTreeRectF<NavElement>(GetRectFromMinMax(leftBottomMapCorner, rightUpperMapCorner));
             _Accuracy                     = accuracy;
         }
@@ -120,6 +126,16 @@ namespace DeusaldNav2D
 
             while (_ElementsToRebuildGroups.Count != 0)
                 _ElementsToRebuildGroups.Dequeue().RebuildTheElementGroup();
+
+            _ElementsOnRebuildGroupsQueue.Clear();
+
+            foreach (var id in elementsGroupToRebuild)
+            {
+                if (!elementsGroups.ContainsKey(id)) continue;
+                elementsGroups[id].Rebuild();
+            }
+
+            elementsGroupToRebuild.Clear();
         }
 
         public NavElement AddObstacle(Vector2[] points, Vector2 position, float rotation, float extraOffset = 0f)
@@ -138,7 +154,7 @@ namespace DeusaldNav2D
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
             return newObstacle;
         }
-        
+
         public NavElement AddSurface(Vector2[] points, Vector2 position, float rotation, float cost, float extraOffset = 0f)
         {
             NavElement newSurface = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Surface, cost);
@@ -149,7 +165,7 @@ namespace DeusaldNav2D
 
         public NavElement AddSurface(float radius, Vector2 position, float cost, float extraOffset = 0f)
         {
-            Vector2[]  points      = GetHexagonPoints(radius);
+            Vector2[]  points     = GetHexagonPoints(radius);
             NavElement newSurface = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Surface, cost);
             _Surfaces.Add(newSurface);
             newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
@@ -210,7 +226,7 @@ namespace DeusaldNav2D
         {
             _AreObstaclesDirty = true;
         }
-        
+
         private void MarkSurfacesDirty(object sender, EventArgs eventArgs)
         {
             _AreSurfacesDirty = true;

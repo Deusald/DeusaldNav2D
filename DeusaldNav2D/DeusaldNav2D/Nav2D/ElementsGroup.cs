@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 using System.Collections.Generic;
+using ClipperLib;
 
 namespace DeusaldNav2D
 {
@@ -38,7 +39,9 @@ namespace DeusaldNav2D
 
         #region Properties
 
-        public uint Id => _Id;
+        public uint           Id           => _Id;
+        public List<NavShape> NavObstacles { get; }
+        public List<NavShape> NavSurfaces  { get; }
 
         #endregion Properties
 
@@ -46,10 +49,12 @@ namespace DeusaldNav2D
 
         internal ElementsGroup(Nav2D nav2D, uint id)
         {
-            _Nav2D     = nav2D;
-            _Id        = id;
-            _Obstacles = new HashSet<NavElement>();
-            _Surfaces  = new HashSet<NavElement>();
+            _Nav2D       = nav2D;
+            _Id          = id;
+            _Obstacles   = new HashSet<NavElement>();
+            _Surfaces    = new HashSet<NavElement>();
+            NavObstacles = new List<NavShape>();
+            NavSurfaces  = new List<NavShape>();
         }
 
         #endregion Init Methods
@@ -85,6 +90,69 @@ namespace DeusaldNav2D
 
             foreach (var surface in surfaces)
                 surface.ElementGroupId = 0;
+        }
+
+        public void Rebuild()
+        {
+            List<List<IntPoint>> obstaclesIntPoints = new List<List<IntPoint>>();
+            NavObstacles.Clear();
+            NavSurfaces.Clear();
+
+            List<NavElement> obstacles = new List<NavElement>(_Obstacles);
+            List<NavElement> surfaces  = new List<NavElement>(_Surfaces);
+
+            foreach (var obstacle in obstacles)
+                obstaclesIntPoints.Add(obstacle.intNavElementPoints);
+
+            if (obstaclesIntPoints.Count > 0)
+            {
+                if (obstaclesIntPoints.Count == 1)
+                    NavObstacles.Add(new NavShape(obstacles[0].navElementPoints, NavElement.Type.Obstacle));
+                else
+                {
+                    _Nav2D.clipper.Clear();
+                    _Nav2D.polyTree.Clear();
+                    _Nav2D.clipper.AddPaths(obstaclesIntPoints, PolyType.ptSubject, true);
+                    _Nav2D.clipper.Execute(ClipType.ctUnion, _Nav2D.polyTree);
+
+                    // We got more separated ones
+                    if (_Nav2D.polyTree.IsHole)
+                    {
+                        foreach (var child in _Nav2D.polyTree.Childs)
+                            NavObstacles.Add(new NavShape(_Nav2D, child.Contour, child.IsHole, child.Childs, NavElement.Type.Obstacle));
+                    }
+                    else // We got one big containing everyone
+                        NavObstacles.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, _Nav2D.polyTree.Childs, NavElement.Type.Obstacle));
+                }
+            }
+            
+            if (surfaces.Count == 0) return;
+
+            if (obstacles.Count == 0)
+            {
+                foreach (var surface in surfaces)
+                    NavSurfaces.Add(new NavShape(surface.navElementPoints, NavElement.Type.Surface));
+                
+                return;
+            }
+
+            foreach (var surface in surfaces)
+            {
+                _Nav2D.clipper.Clear();
+                _Nav2D.polyTree.Clear();
+                _Nav2D.clipper.AddPath(surface.intNavElementPoints, PolyType.ptSubject, true);
+                _Nav2D.clipper.AddPaths(obstaclesIntPoints, PolyType.ptClip, true);
+                _Nav2D.clipper.Execute(ClipType.ctDifference, _Nav2D.polyTree);
+                
+                // We got more separated ones
+                if (_Nav2D.polyTree.IsHole)
+                {
+                    foreach (var child in _Nav2D.polyTree.Childs)
+                        NavObstacles.Add(new NavShape(_Nav2D, child.Contour, child.IsHole, child.Childs, NavElement.Type.Surface));
+                }
+                else // We got one big containing everyone
+                    NavObstacles.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, _Nav2D.polyTree.Childs, NavElement.Type.Surface));
+            }
         }
 
         #endregion Public Methods
