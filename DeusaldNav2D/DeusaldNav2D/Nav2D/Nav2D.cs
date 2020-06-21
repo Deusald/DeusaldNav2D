@@ -176,7 +176,7 @@ namespace DeusaldNav2D
         {
             NavElement newSurface = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Surface, cost);
             _Surfaces.Add(newSurface);
-            newSurface.DirtyFlagEnabled += MarkObstaclesDirty;
+            newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
             return newSurface;
         }
 
@@ -187,6 +187,22 @@ namespace DeusaldNav2D
             _Surfaces.Add(newSurface);
             newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
             return newSurface;
+        }
+
+        public void RemoveNavElement(NavElement navElement)
+        {
+            if (navElement.NavType == NavElement.Type.Obstacle)
+            {
+                navElement.DirtyFlagEnabled -= MarkObstaclesDirty;
+                elementsGroups[navElement.ElementGroupId].DismantleGroup(true);
+                _Obstacles.Remove(navElement);
+            }
+            else if (navElement.NavType == NavElement.Type.Surface)
+            {
+                navElement.DirtyFlagEnabled -= MarkSurfacesDirty;
+                elementsGroups[navElement.ElementGroupId].DismantleGroup(true);
+                _Surfaces.Remove(navElement);
+            }
         }
 
         internal IntPoint ParseToIntPoint(Vector2 vector2)
@@ -308,6 +324,8 @@ namespace DeusaldNav2D
                     if (!obstacle.Hole)
                         parentForbiddenConnection.Add(obstacle, forbiddenConnection);
 
+                    if (obstacle.Children == null) continue;
+                    
                     foreach (var child in obstacle.Children)
                         obstacles.Enqueue(child);
                 }

@@ -81,16 +81,26 @@ namespace DeusaldNav2D
             _Nav2D.elementsGroups.Remove(Id);
         }
 
-        public void DismantleGroup()
+        public void DismantleGroup(bool markDirty = false)
         {
             List<NavElement> obstacles = new List<NavElement>(_Obstacles);
             List<NavElement> surfaces  = new List<NavElement>(_Surfaces);
 
             foreach (var obstacle in obstacles)
+            {
+                if (markDirty)
+                    obstacle.JustGroupDirty = true;
+                    
                 obstacle.ElementGroupId = 0;
+            }
 
             foreach (var surface in surfaces)
+            {
+                if (markDirty)
+                    surface.JustGroupDirty = true;
+                
                 surface.ElementGroupId = 0;
+            }
         }
 
         public void Rebuild()

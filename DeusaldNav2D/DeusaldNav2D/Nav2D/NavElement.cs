@@ -56,6 +56,8 @@ namespace DeusaldNav2D
 
         #region Variables
 
+        public event EventHandler NavElementPointsRefreshed;
+
         internal event EventHandler                  DirtyFlagEnabled;
         internal event EventHandler<CostChangedData> CostChanged;
 
@@ -73,6 +75,7 @@ namespace DeusaldNav2D
         private bool           _InQuadTree;
         private uint           _ElementGroupId;
         private float          _Cost;
+        private bool           _JustGroupDirty;
 
         private readonly Vector2[] _OriginalPoints;
         private readonly Nav2D     _Nav2D;
@@ -87,10 +90,22 @@ namespace DeusaldNav2D
 
             private set
             {
-                _IsDirty = value;
+                _IsDirty        = value;
+                _JustGroupDirty = false;
 
                 if (value)
                     DirtyFlagEnabled?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public bool JustGroupDirty
+        {
+            get => _JustGroupDirty;
+
+            internal set
+            {
+                IsDirty         = true;
+                _JustGroupDirty = value;
             }
         }
 
@@ -347,44 +362,49 @@ namespace DeusaldNav2D
 
         private void RebuildNavElementPoints()
         {
-            float minX = float.MaxValue;
-            float maxX = float.MinValue;
-            float minY = float.MaxValue;
-            float maxY = float.MinValue;
-
-            if (navElementPoints.Length != _ExtendedPoints.Length)
-                navElementPoints = new Vector2[_ExtendedPoints.Length];
-
-            for (int i = 0; i < _ExtendedPoints.Length; ++i)
+            if (!_JustGroupDirty)
             {
-                Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
-                Vector2 translated = _Position + rotated;
-                navElementPoints[i] = translated;
-                minX                = MathF.Min(minX, translated.x);
-                maxX                = MathF.Max(maxX, translated.x);
-                minY                = MathF.Min(minY, translated.y);
-                maxY                = MathF.Max(maxY, translated.y);
+                float minX = float.MaxValue;
+                float maxX = float.MinValue;
+                float minY = float.MaxValue;
+                float maxY = float.MinValue;
+
+                if (navElementPoints.Length != _ExtendedPoints.Length)
+                    navElementPoints = new Vector2[_ExtendedPoints.Length];
+
+                for (int i = 0; i < _ExtendedPoints.Length; ++i)
+                {
+                    Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
+                    Vector2 translated = _Position + rotated;
+                    navElementPoints[i] = translated;
+                    minX                = MathF.Min(minX, translated.x);
+                    maxX                = MathF.Max(maxX, translated.x);
+                    minY                = MathF.Min(minY, translated.y);
+                    maxY                = MathF.Max(maxY, translated.y);
+                }
+
+                BottomBoundingBox = new Vector2(minX, minY);
+                TopBoundingBox    = new Vector2(maxX, maxY);
+                Rect              = _Nav2D.GetRectFromMinMax(BottomBoundingBox, TopBoundingBox);
+
+                if (_InQuadTree)
+                    _Nav2D.QuadTree.Move(this);
+                else
+                {
+                    _Nav2D.QuadTree.Add(this);
+                    _InQuadTree = true;
+                }
+
+                intNavElementPoints.Clear();
+
+                foreach (var point in navElementPoints)
+                    intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
             }
 
-            BottomBoundingBox = new Vector2(minX, minY);
-            TopBoundingBox    = new Vector2(maxX, maxY);
-            Rect              = _Nav2D.GetRectFromMinMax(BottomBoundingBox, TopBoundingBox);
-
-            if (_InQuadTree)
-                _Nav2D.QuadTree.Move(this);
-            else
-            {
-                _Nav2D.QuadTree.Add(this);
-                _InQuadTree = true;
-            }
-
-            intNavElementPoints.Clear();
-
-            foreach (var point in navElementPoints)
-                intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
-            
             _Nav2D.AddElementOnRebuildGroupsQueue(this);
-            _IsDirty = false;
+            _IsDirty        = false;
+            _JustGroupDirty = false;
+            NavElementPointsRefreshed?.Invoke(this, EventArgs.Empty);
         }
 
         #endregion Private Methods
