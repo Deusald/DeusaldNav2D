@@ -160,6 +160,7 @@ namespace DeusaldNav2D
             NavElement newObstacle = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Obstacle, 1f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
+            _AreObstaclesDirty = true;
             return newObstacle;
         }
 
@@ -169,6 +170,7 @@ namespace DeusaldNav2D
             NavElement newObstacle = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Obstacle, 1f);
             _Obstacles.Add(newObstacle);
             newObstacle.DirtyFlagEnabled += MarkObstaclesDirty;
+            _AreObstaclesDirty = true;
             return newObstacle;
         }
 
@@ -177,6 +179,7 @@ namespace DeusaldNav2D
             NavElement newSurface = new NavElement(points, position, rotation, extraOffset, this, NavElement.Type.Surface, cost);
             _Surfaces.Add(newSurface);
             newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
+            _AreSurfacesDirty = true;
             return newSurface;
         }
 
@@ -186,6 +189,7 @@ namespace DeusaldNav2D
             NavElement newSurface = new NavElement(points, position, 0f, extraOffset, this, NavElement.Type.Surface, cost);
             _Surfaces.Add(newSurface);
             newSurface.DirtyFlagEnabled += MarkSurfacesDirty;
+            _AreSurfacesDirty = true;
             return newSurface;
         }
 
@@ -203,6 +207,8 @@ namespace DeusaldNav2D
                 elementsGroups[navElement.ElementGroupId].DismantleGroup(true);
                 _Surfaces.Remove(navElement);
             }
+
+            QuadTree.Remove(navElement);
         }
 
         internal IntPoint ParseToIntPoint(Vector2 vector2)
@@ -340,6 +346,7 @@ namespace DeusaldNav2D
             for (int i = 0; i < navShape.Points.Length - 1; ++i)
             {
                 NavPoint point = new NavPoint(_ConnectionOrderId++, navShape.Points[i], forbiddenConnection);
+                _NavPoints.Add(point);
 
                 point.Neighbours.Add(previousPoint);
                 previousPoint.Neighbours.Add(point);
@@ -348,6 +355,7 @@ namespace DeusaldNav2D
                 previousPoint = point;
             }
 
+            _NavPoints.Add(lastPoint);
             previousPoint.Neighbours.Add(lastPoint);
             lastPoint.Neighbours.Add(previousPoint);
             AddToConnectionDictionary(previousPoint, lastPoint);

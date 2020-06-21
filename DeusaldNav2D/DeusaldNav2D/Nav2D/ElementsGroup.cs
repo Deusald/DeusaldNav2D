@@ -90,7 +90,9 @@ namespace DeusaldNav2D
             {
                 if (markDirty)
                     obstacle.JustGroupDirty = true;
-                    
+                else
+                    _Nav2D.AddElementOnRebuildGroupsQueue(obstacle);    
+                
                 obstacle.ElementGroupId = 0;
             }
 
@@ -98,6 +100,8 @@ namespace DeusaldNav2D
             {
                 if (markDirty)
                     surface.JustGroupDirty = true;
+                else
+                    _Nav2D.AddElementOnRebuildGroupsQueue(surface); 
                 
                 surface.ElementGroupId = 0;
             }
@@ -138,7 +142,7 @@ namespace DeusaldNav2D
                     _Nav2D.clipper.Clear();
                     _Nav2D.polyTree.Clear();
                     _Nav2D.clipper.AddPaths(obstaclesIntPoints, PolyType.ptSubject, true);
-                    _Nav2D.clipper.Execute(ClipType.ctUnion, _Nav2D.polyTree);
+                    _Nav2D.clipper.Execute(ClipType.ctUnion, _Nav2D.polyTree, PolyFillType.pftNonZero);
 
                     // We got more separated ones
                     if (_Nav2D.polyTree.IsHole)
@@ -159,7 +163,7 @@ namespace DeusaldNav2D
                 _Nav2D.polyTree.Clear();
                 _Nav2D.clipper.AddPath(surface.intNavElementPoints, PolyType.ptSubject, true);
                 _Nav2D.clipper.AddPaths(obstaclesIntPoints, PolyType.ptClip, true);
-                _Nav2D.clipper.Execute(ClipType.ctDifference, _Nav2D.polyTree);
+                _Nav2D.clipper.Execute(ClipType.ctDifference, _Nav2D.polyTree, PolyFillType.pftNonZero);
 
                 // We got more separated ones
                 if (_Nav2D.polyTree.IsHole)
