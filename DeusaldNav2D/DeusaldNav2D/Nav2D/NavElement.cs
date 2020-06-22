@@ -26,11 +26,10 @@ using System.Collections.Generic;
 using System.Drawing;
 using ClipperLib;
 using DeusaldSharp;
-using QuadTrees.QTreeRectF;
 
 namespace DeusaldNav2D
 {
-    public class NavElement : IRectFQuadStorable
+    public class NavElement
     {
         #region Types
 
@@ -62,6 +61,7 @@ namespace DeusaldNav2D
         internal event EventHandler<CostChangedData> CostChanged;
 
         internal Vector2[] navElementPoints;
+        internal uint      elementGroupId;
 
         internal readonly List<IntPoint> intNavElementPoints;
 
@@ -72,10 +72,7 @@ namespace DeusaldNav2D
         private bool           _IsExtendDirty;
         private Vector2[]      _ExtendedPoints;
         private List<IntPoint> _EnterExtendPoints;
-        private bool           _InQuadTree;
-        private uint           _ElementGroupId;
         private float          _Cost;
-        private bool           _JustGroupDirty;
 
         private readonly Vector2[] _OriginalPoints;
         private readonly Nav2D     _Nav2D;
@@ -90,22 +87,10 @@ namespace DeusaldNav2D
 
             private set
             {
-                _IsDirty        = value;
-                _JustGroupDirty = false;
+                _IsDirty = value;
 
                 if (value)
                     DirtyFlagEnabled?.Invoke(this, EventArgs.Empty);
-            }
-        }
-
-        public bool JustGroupDirty
-        {
-            get => _JustGroupDirty;
-
-            internal set
-            {
-                IsDirty         = true;
-                _JustGroupDirty = value;
             }
         }
 
@@ -157,28 +142,6 @@ namespace DeusaldNav2D
         public RectangleF Rect              { get; private set; }
         public Type       NavType           { get; }
 
-        internal uint ElementGroupId
-        {
-            get => _ElementGroupId;
-
-            set
-            {
-                if (_ElementGroupId == value) return;
-
-                if (_ElementGroupId != 0)
-                    _Nav2D.elementsGroups[_ElementGroupId].RemoveNavElement(this);
-
-                _ElementGroupId = value;
-
-                if (_ElementGroupId == 0) return;
-
-                if (!_Nav2D.elementsGroups.ContainsKey(_ElementGroupId))
-                    _Nav2D.elementsGroups.Add(_ElementGroupId, new ElementsGroup(_Nav2D, _ElementGroupId));
-
-                _Nav2D.elementsGroups[_ElementGroupId].AddElement(this);
-            }
-        }
-
         #endregion Properties
 
         #region Init Methods
@@ -195,11 +158,10 @@ namespace DeusaldNav2D
             _Rotation           = rotation;
             _ExtraOffset        = extraOffset;
             _Cost               = cost;
-            _ElementGroupId     = 0;
+            elementGroupId      = 0;
             NavType             = type;
             _IsDirty            = true;
             _IsExtendDirty      = true;
-            _InQuadTree         = false;
 
             if (originalPoints.Length < 3)
                 throw new Exception("Can't create polygon shape with less than 3 vertex!");
@@ -226,39 +188,38 @@ namespace DeusaldNav2D
 
         internal void RebuildTheElementGroup()
         {
-            if (ElementGroupId != 0)
-                _Nav2D.elementsGroups[ElementGroupId].DismantleGroup();
+            uint                    commonId                   = 0;
+            HashSet<uint>           collidedGroupIds           = new HashSet<uint>();
+            IEnumerable<NavElement> collidedElementsEnumerator = _Nav2D.QuadTree.GetNodesInside(Rect);
+            List<NavElement>        collidedElements           = new List<NavElement>();
 
-            ElementGroupId = 0;
-            uint             commonId         = 0;
-            HashSet<uint>    collidedGroupIds = new HashSet<uint>();
-            List<NavElement> collidedElements = _Nav2D.QuadTree.GetObjects(Rect);
+            foreach (var collidedNavElement in collidedElementsEnumerator)
+                collidedElements.Add(collidedNavElement);
 
-            if (collidedElements.Count == 0)
+            if (collidedElements.Count == 1)
             {
-                ElementGroupId = _Nav2D.NextGroupId;
-                _Nav2D.elementsGroupToRebuild.Add(ElementGroupId);
+                elementGroupId = _Nav2D.NextGroupId;
+                SetElementGroup(this, elementGroupId);
+                _Nav2D.elementsGroupToRebuild.Add(elementGroupId);
                 return;
             }
 
             foreach (var element in collidedElements)
             {
-                if (element == this) continue;
-                if (element.ElementGroupId == 0) continue;
-                collidedGroupIds.Add(element.ElementGroupId);
-                commonId = element.ElementGroupId;
+                if (element.elementGroupId == 0) continue;
+                collidedGroupIds.Add(element.elementGroupId);
+                commonId = element.elementGroupId;
             }
 
             if (collidedGroupIds.Count == 0)
             {
-                commonId       = _Nav2D.NextGroupId;
-                ElementGroupId = commonId;
+                commonId = _Nav2D.NextGroupId;
                 _Nav2D.elementsGroupToRebuild.Add(commonId);
 
                 foreach (var element in collidedElements)
                 {
-                    if (element == this) continue;
-                    element.ElementGroupId = commonId;
+                    element.elementGroupId = commonId;
+                    SetElementGroup(element, elementGroupId);
                     _Nav2D.AddElementOnRebuildGroupsQueue(element);
                 }
 
@@ -267,29 +228,44 @@ namespace DeusaldNav2D
 
             if (collidedGroupIds.Count == 1)
             {
-                ElementGroupId = commonId;
                 _Nav2D.elementsGroupToRebuild.Add(commonId);
 
                 foreach (var element in collidedElements)
                 {
-                    if (element == this) continue;
-                    element.ElementGroupId = commonId;
+                    element.elementGroupId = commonId;
+                    SetElementGroup(element, elementGroupId);
                     _Nav2D.AddElementOnRebuildGroupsQueue(element);
                 }
 
                 return;
             }
 
-            commonId       = _Nav2D.NextGroupId;
-            ElementGroupId = commonId;
+            List<uint> ids = new List<uint>(collidedGroupIds);
+            commonId = ids[0];
+            ElementsGroup mergeGroup = _Nav2D.elementsGroups[commonId];
             _Nav2D.elementsGroupToRebuild.Add(commonId);
+
+            for (int i = 1; i < ids.Count; ++i)
+            {
+                ElementsGroup elementsGroup = _Nav2D.elementsGroups[ids[i]];
+                _Nav2D.elementsGroups.Remove(ids[i]);
+                mergeGroup.MergeToThis(elementsGroup);
+            }
 
             foreach (var element in collidedElements)
             {
-                if (element == this) continue;
-                element.ElementGroupId = commonId;
+                element.elementGroupId = commonId;
+                SetElementGroup(element, elementGroupId);
                 _Nav2D.AddElementOnRebuildGroupsQueue(element);
             }
+        }
+
+        internal void SetElementGroup(NavElement element, uint id)
+        {
+            if (!_Nav2D.elementsGroups.ContainsKey(id))
+                _Nav2D.elementsGroups.Add(id, new ElementsGroup(_Nav2D, id));
+
+            _Nav2D.elementsGroups[id].AddElement(element);
         }
 
         #endregion Public Methods
@@ -362,48 +338,42 @@ namespace DeusaldNav2D
 
         private void RebuildNavElementPoints()
         {
-            if (!_JustGroupDirty)
+            float minX = float.MaxValue;
+            float maxX = float.MinValue;
+            float minY = float.MaxValue;
+            float maxY = float.MinValue;
+
+            if (navElementPoints.Length != _ExtendedPoints.Length)
+                navElementPoints = new Vector2[_ExtendedPoints.Length];
+
+            for (int i = 0; i < _ExtendedPoints.Length; ++i)
             {
-                float minX = float.MaxValue;
-                float maxX = float.MinValue;
-                float minY = float.MaxValue;
-                float maxY = float.MinValue;
-
-                if (navElementPoints.Length != _ExtendedPoints.Length)
-                    navElementPoints = new Vector2[_ExtendedPoints.Length];
-
-                for (int i = 0; i < _ExtendedPoints.Length; ++i)
-                {
-                    Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
-                    Vector2 translated = _Position + rotated;
-                    navElementPoints[i] = translated;
-                    minX                = MathF.Min(minX, translated.x);
-                    maxX                = MathF.Max(maxX, translated.x);
-                    minY                = MathF.Min(minY, translated.y);
-                    maxY                = MathF.Max(maxY, translated.y);
-                }
-
-                BottomBoundingBox = new Vector2(minX, minY);
-                TopBoundingBox    = new Vector2(maxX, maxY);
-                Rect              = _Nav2D.GetRectFromMinMax(BottomBoundingBox, TopBoundingBox);
-
-                if (_InQuadTree)
-                    _Nav2D.QuadTree.Move(this);
-                else
-                {
-                    _Nav2D.QuadTree.Add(this);
-                    _InQuadTree = true;
-                }
-
-                intNavElementPoints.Clear();
-
-                foreach (var point in navElementPoints)
-                    intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
+                Vector2 rotated    = Vector2.Rotate(_Rotation, _ExtendedPoints[i]);
+                Vector2 translated = _Position + rotated;
+                navElementPoints[i] = translated;
+                minX                = MathF.Min(minX, translated.x);
+                maxX                = MathF.Max(maxX, translated.x);
+                minY                = MathF.Min(minY, translated.y);
+                maxY                = MathF.Max(maxY, translated.y);
             }
 
+            BottomBoundingBox = new Vector2(minX, minY);
+            TopBoundingBox    = new Vector2(maxX, maxY);
+            Rect              = _Nav2D.GetRectFromMinMax(BottomBoundingBox, TopBoundingBox);
+
+            _Nav2D.QuadTree.Remove(this);
+            _Nav2D.QuadTree.Insert(this, Rect);
+
+            intNavElementPoints.Clear();
+
+            foreach (var point in navElementPoints)
+                intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
+
+            if (elementGroupId != 0)
+                _Nav2D.elementsGroups[elementGroupId].DismantleGroup();
+
             _Nav2D.AddElementOnRebuildGroupsQueue(this);
-            _IsDirty        = false;
-            _JustGroupDirty = false;
+            _IsDirty = false;
             NavElementPointsRefreshed?.Invoke(this, EventArgs.Empty);
         }
 

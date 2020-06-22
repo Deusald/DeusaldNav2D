@@ -70,43 +70,46 @@ namespace DeusaldNav2D
                 _Surfaces.Add(element);
         }
 
-        public void RemoveNavElement(NavElement element)
-        {
-            if (element.NavType == NavElement.Type.Obstacle)
-                _Obstacles.Remove(element);
-            else if (element.NavType == NavElement.Type.Surface)
-                _Surfaces.Remove(element);
-
-            if (_Obstacles.Count != 0 || _Surfaces.Count != 0) return;
-            _Nav2D.elementsGroups.Remove(Id);
-        }
-
-        public void DismantleGroup(bool markDirty = false)
+        public void DismantleGroup()
         {
             List<NavElement> obstacles = new List<NavElement>(_Obstacles);
             List<NavElement> surfaces  = new List<NavElement>(_Surfaces);
 
             foreach (var obstacle in obstacles)
             {
-                if (markDirty)
-                    obstacle.JustGroupDirty = true;
-                else
-                    _Nav2D.AddElementOnRebuildGroupsQueue(obstacle);    
-                
-                obstacle.ElementGroupId = 0;
+                _Nav2D.AddElementOnRebuildGroupsQueue(obstacle);
+                obstacle.elementGroupId = 0;
             }
 
             foreach (var surface in surfaces)
             {
-                if (markDirty)
-                    surface.JustGroupDirty = true;
-                else
-                    _Nav2D.AddElementOnRebuildGroupsQueue(surface); 
-                
-                surface.ElementGroupId = 0;
+                _Nav2D.AddElementOnRebuildGroupsQueue(surface);
+                surface.elementGroupId = 0;
             }
+            
+            _Nav2D.elementsGroups.Remove(Id);
         }
 
+        public void MergeToThis(ElementsGroup otherGroup)
+        {
+            foreach (var obstacle in otherGroup._Obstacles)
+            {
+                obstacle.elementGroupId = Id;
+                _Obstacles.Add(obstacle);
+            }
+
+
+            foreach (var surface in otherGroup._Surfaces)
+            {
+                surface.elementGroupId = Id;
+                _Surfaces.Add(surface);
+            }
+            
+            otherGroup._Obstacles.Clear();
+            otherGroup._Surfaces.Clear();
+            
+        }
+        
         public void Rebuild()
         {
             NavObstacles.Clear();

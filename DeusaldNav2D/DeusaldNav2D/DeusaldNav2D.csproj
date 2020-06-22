@@ -12,9 +12,6 @@
       <Reference Include="DeusaldSharp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
         <HintPath>Dlls\net48\DeusaldSharp.dll</HintPath>
       </Reference>
-      <Reference Include="QuadTrees, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
-        <HintPath>Dlls\net48\QuadTrees.dll</HintPath>
-      </Reference>
     </ItemGroup>
 
 </Project>
