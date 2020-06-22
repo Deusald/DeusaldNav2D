@@ -157,6 +157,7 @@ MonoBehaviour:
   _AgentRadius: 0.25
   _NavMeshElementObject: {fileID: 2603196730396229122, guid: 39c7434c42d2c6e44838b95ee5aa598f,
     type: 3}
+  _SpawnPosition: {x: 0, y: 0}
   _IsObstacle: 1
   _Cost: 1
   _Width: 1

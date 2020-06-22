@@ -30,6 +30,9 @@ namespace DeusaldNav2DTest
         private GameObject _NavMeshElementObject;
 
         [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
+        private Vector2 _SpawnPosition;
+        
+        [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
         private bool _IsObstacle;
 
         [SerializeField, ShowIf(nameof(IsPlayModeOnAndNotObstacle)), BoxGroup(_CreateNavElementGroup)]
@@ -144,8 +147,8 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(points.ToArray(), DeusaldSharp.Vector2.Zero, 0f);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddObstacle(points.ToArray(), ToVec2(_SpawnPosition), 0f);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
             else
@@ -156,8 +159,8 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(points.ToArray(), DeusaldSharp.Vector2.Zero, 0f, _Cost);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddSurface(points.ToArray(), ToVec2(_SpawnPosition), 0f, _Cost);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
         }
@@ -173,8 +176,8 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(_Radius, DeusaldSharp.Vector2.Zero, 0f);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddObstacle(_Radius, ToVec2(_SpawnPosition), 0f);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
             else
@@ -185,8 +188,8 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(_Radius, DeusaldSharp.Vector2.Zero, 0f, _Cost);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddSurface(_Radius, ToVec2(_SpawnPosition), 0f, _Cost);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
         }
@@ -201,8 +204,8 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(points, DeusaldSharp.Vector2.Zero, 0f);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddObstacle(points, ToVec2(_SpawnPosition), 0f);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
             else
@@ -213,8 +216,8 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(points, DeusaldSharp.Vector2.Zero, 0f, _Cost);
-                GameObject elementObject = Instantiate(_NavMeshElementObject, Vector3.zero, Quaternion.identity);
+                NavElement element       = Nav2D.AddSurface(points, ToVec2(_SpawnPosition), 0f, _Cost);
+                GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
         }
