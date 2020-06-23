@@ -1,513 +1,476 @@
-//----------------------------------------------------------------
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-//----------------------------------------------------------------
+﻿/*The MIT License (MIT)
 
-using System;
+Copyright (c) 2015 ChevyRay
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Drawing;
+using DeusaldSharp;
 
-namespace Microsoft.QuadTree
+namespace QuadTree
 {
     /// <summary>
-    /// This class efficiently stores and retrieves arbitrarily sized and positioned
-    /// objects in a quad-tree data structure.  This can be used to do efficient hit
-    /// detection or visiblility checks on objects in a virtualized canvas.
-    /// The object does not need to implement any special interface because the RectangleF Bounds
-    /// of those objects is handled as a separate argument to Insert.
+    /// A quad tree where leaf nodes contain a quad and a unique instance of T.
+    /// For example, if you are developing a game, you might use QuadTree<GameObject>
+    /// for collisions, or QuadTree<int> if you just want to populate it with IDs.
     /// </summary>
-    class QuadTree<T> where T : class
+    public class QuadTree<T>
     {
-        RectangleF bounds; // overall bounds we are indexing.
-        Quadrant root;
-        IDictionary<T, Quadrant> table;
- 
- 
- 
+        internal static Stack<Branch> branchPool = new Stack<Branch>();
+        internal static Stack<Leaf>   leafPool   = new Stack<Leaf>();
+
+        Branch                       root;
+        internal int                 splitCount;
+        internal int                 depthLimit;
+        internal Dictionary<T, Leaf> leafLookup = new Dictionary<T, Leaf>();
+
         /// <summary>
-        /// This determines the overall quad-tree indexing strategy, changing this bounds
-        /// is expensive since it has to re-divide the entire thing - like a re-hash operation.
+        /// Creates a new QuadTree.
         /// </summary>
-        public RectangleF Bounds
+        /// <param name="splitCount">How many leaves a branch can hold before it splits into sub-branches.</param>
+        /// <param name="depthLimit">Maximum distance a node can be from the tree root.</param>
+        /// <param name="region">The region that your quadtree occupies, all inserted quads should fit into this.</param>
+        public QuadTree(int splitCount, int depthLimit, ref Quad region)
         {
-            get { return this.bounds; }
-            set { this.bounds = value; ReIndex(); }
+            this.splitCount = splitCount;
+            this.depthLimit = depthLimit;
+            root            = CreateBranch(this, null, 0, ref region);
         }
- 
+
         /// <summary>
-        /// Insert a node with given bounds into this QuadTree.
+        /// Creates a new QuadTree.
         /// </summary>
-        /// <param name="node">The node to insert</param>
-        /// <param name="bounds">The bounds of this node</param>
-        public void Insert(T node, RectangleF bounds)
+        /// <param name="splitCount">How many leaves a branch can hold before it splits into sub-branches.</param>
+        /// <param name="depthLimit">Maximum distance a node can be from the tree root.</param>
+        /// <param name="region">The region that your quadtree occupies, all inserted quads should fit into this.</param>
+        public QuadTree(int splitCount, int depthLimit, Quad region)
+            : this(splitCount, depthLimit, ref region) { }
+
+        /// <summary>
+        /// Creates a new QuadTree.
+        /// </summary>
+        /// <param name="splitCount">How many leaves a branch can hold before it splits into sub-branches.</param>
+        /// <param name="depthLimit">Maximum distance a node can be from the tree root.</param>
+        /// <param name="x">X position of the region.</param>
+        /// <param name="y">Y position of the region.</param>
+        /// <param name="width">Width of the region.</param>
+        /// <param name="height">Height of the region.</param>
+        public QuadTree(int splitCount, int depthLimit, float x, float y, float width, float height)
+            : this(splitCount, depthLimit, new Quad(x, y, x + width, y + height)) { }
+
+        /// <summary>
+        /// Clear the QuadTree. This will remove all leaves and branches. If you have a lot of moving objects,
+        /// you probably want to call Clear() every frame, and re-insert every object. Branches and leaves are pooled.
+        /// </summary>
+        public void Clear()
         {
-            if (this.bounds.Width == 0 || this.bounds.Height == 0)
-            {
-                throw new Exception("BoundsMustBeNonZero");
-            }
-            if (bounds.Width == 0 || bounds.Height == 0)
-            {
-                throw new Exception("BoundsMustBeNonZero");
-            }
-            if (this.root == null)
-            {
-                this.root = new Quadrant(null, this.bounds);
-            }
- 
-            Quadrant parent = this.root.Insert(node, bounds);
- 
-            if (this.table == null)
-            {
-                this.table = new Dictionary<T, Quadrant>();
-            }
-            this.table[node] = parent;
- 
- 
+            root.Clear();
+            root.Tree = this;
+            leafLookup.Clear();
         }
- 
+
         /// <summary>
-        /// Get a list of the nodes that intersect the given bounds.
+        /// QuadTree internally keeps pools of Branches and Leaves. If you want to clear these to clean up memory,
+        /// you can call this function. Most of the time you'll want to leave this alone, though.
         /// </summary>
-        /// <param name="bounds">The bounds to test</param>
-        /// <returns>List of zero or mode nodes found inside the given bounds</returns>
-        public IEnumerable<T> GetNodesInside(RectangleF bounds)
+        public static void ClearPools()
         {
-            foreach (QuadNode n in GetNodes(bounds))
-            {
-                yield return n.Node;
-            }
+            branchPool = new Stack<Branch>();
+            leafPool   = new Stack<Leaf>();
         }
- 
+
         /// <summary>
-        /// Get a list of the nodes that intersect the given bounds.
+        /// Insert a new leaf node into the QuadTree.
         /// </summary>
-        /// <param name="bounds">The bounds to test</param>
-        /// <returns>List of zero or mode nodes found inside the given bounds</returns>
-        public bool HasNodesInside(RectangleF bounds)
+        /// <param name="value">The leaf value.</param>
+        /// <param name="quad">The leaf size.</param>
+        public void Insert(T value, ref Quad quad)
         {
-            if (this.root == null)
+            Leaf leaf;
+            if (!leafLookup.TryGetValue(value, out leaf))
             {
-                return false;                
+                leaf = CreateLeaf(value, ref quad);
+                leafLookup.Add(value, leaf);
             }
-            return this.root.HasIntersectingNodes(bounds);
+
+            root.Insert(leaf);
         }
- 
+
         /// <summary>
-        /// Get list of nodes that intersect the given bounds.
+        /// Insert a new leaf node into the QuadTree.
         /// </summary>
-        /// <param name="bounds">The bounds to test</param>
-        /// <returns>The list of nodes intersecting the given bounds</returns>
-        IEnumerable<QuadNode> GetNodes(RectangleF bounds)
+        /// <param name="value">The leaf value.</param>
+        /// <param name="quad">The leaf quad.</param>
+        public void Insert(T value, Quad quad)
         {
-            List<QuadNode> result = new List<QuadNode>();
-            if (this.root != null)
-            {
-                this.root.GetIntersectingNodes(result, bounds);
-            }
-            return result;
+            Insert(value, ref quad);
         }
- 
+
         /// <summary>
-        /// Remove the given node from this QuadTree.
+        /// Insert a new leaf node into the QuadTree.
         /// </summary>
-        /// <param name="node">The node to remove</param>
-        /// <returns>True if the node was found and removed.</returns>
-        public bool Remove(T node)
+        /// <param name="value">The leaf value.</param>
+        /// <param name="x">X position of the leaf.</param>
+        /// <param name="y">Y position of the leaf.</param>
+        /// <param name="width">Width of the leaf.</param>
+        /// <param name="height">Height of the leaf.</param>
+        public void Insert(T value, float x, float y, float width, float height)
         {
-            if (this.table != null)
+            var quad = new Quad(x, y, x + width, y + height);
+            Insert(value, ref quad);
+        }
+
+        /// <summary>
+        /// Find all values contained in the specified area.
+        /// </summary>
+        /// <returns>True if any values were found.</returns>
+        /// <param name="quad">The area to search.</param>
+        /// <param name="values">A list to populate with the results. If null, this function will create the list for you.</param>
+        public bool SearchArea(ref Quad quad, ref List<T> values)
+        {
+            if (values != null)
+                values.Clear();
+            else
+                values = new List<T>();
+            root.SearchQuad(ref quad, values);
+            return values.Count > 0;
+        }
+
+        /// <summary>
+        /// Find all values contained in the specified area.
+        /// </summary>
+        /// <returns>True if any values were found.</returns>
+        /// <param name="quad">The area to search.</param>
+        /// <param name="values">A list to populate with the results. If null, this function will create the list for you.</param>
+        public bool SearchArea(Quad quad, ref List<T> values)
+        {
+            return SearchArea(ref quad, ref values);
+        }
+
+        /// <summary>
+        /// Find all values contained in the specified area.
+        /// </summary>
+        /// <returns>True if any values were found.</returns>
+        /// <param name="x">X position to search.</param>
+        /// <param name="y">Y position to search.</param>
+        /// <param name="width">Width of the search area.</param>
+        /// <param name="height">Height of the search area.</param>
+        /// <param name="values">A list to populate with the results. If null, this function will create the list for you.</param>
+        public bool SearchArea(float x, float y, float width, float height, ref List<T> values)
+        {
+            var quad = new Quad(x, y, x + width, y + height);
+            return SearchArea(ref quad, ref values);
+        }
+
+        /// <summary>
+        /// Find all values overlapping the specified point.
+        /// </summary>
+        /// <returns>True if any values were found.</returns>
+        /// <param name="x">The x coordinate.</param>
+        /// <param name="y">The y coordinate.</param>
+        /// <param name="values">A list to populate with the results. If null, this function will create the list for you.</param>
+        public bool SearchPoint(float x, float y, ref List<T> values)
+        {
+            if (values != null)
+                values.Clear();
+            else
+                values = new List<T>();
+            root.SearchPoint(x, y, values);
+            return values.Count > 0;
+        }
+
+        /// <summary>
+        /// Find all other values whose areas are overlapping the specified value.
+        /// </summary>
+        /// <returns>True if any collisions were found.</returns>
+        /// <param name="value">The value to check collisions against.</param>
+        /// <param name="values">A list to populate with the results. If null, this function will create the list for you.</param>
+        public bool FindCollisions(T value, ref List<T> values)
+        {
+            if (values != null)
+                values.Clear();
+            else
+                values = new List<T>(leafLookup.Count);
+
+            Leaf leaf;
+            if (leafLookup.TryGetValue(value, out leaf))
             {
-                Quadrant parent = null;
-                if (this.table.TryGetValue(node, out parent))
+                var branch = leaf.Branch;
+
+                //Add the leaf's siblings (prevent it from colliding with itself)
+                if (branch.Leaves.Count > 0)
+                    for (int i = 0; i < branch.Leaves.Count; ++i)
+                        if (leaf != branch.Leaves[i] && leaf.Quad.Intersects(ref branch.Leaves[i].Quad))
+                            values.Add(branch.Leaves[i].Value);
+
+                //Add the branch's children
+                if (branch.Split)
+                    for (int i = 0; i < 4; ++i)
+                        if (branch.Branches[i] != null)
+                            branch.Branches[i].SearchQuad(ref leaf.Quad, values);
+
+                //Add all leaves back to the root
+                branch = branch.Parent;
+                while (branch != null)
                 {
-                    parent.RemoveNode(node);
-                    this.table.Remove(node);
-                    return true;
+                    if (branch.Leaves.Count > 0)
+                        for (int i = 0; i < branch.Leaves.Count; ++i)
+                            if (leaf.Quad.Intersects(ref branch.Leaves[i].Quad))
+                                values.Add(branch.Leaves[i].Value);
+                    branch = branch.Parent;
                 }
             }
+
             return false;
         }
- 
-        /// <summary>
-        /// Rebuild all the Quadrants according to the current QuadTree Bounds.
-        /// </summary>
-        void ReIndex()
-        {
-            this.root = null;
-            foreach (QuadNode n in GetNodes(this.bounds))
-            {
-                Insert(n.Node, n.Bounds);
-            }
-        }
- 
-        /// <summary>
-        /// Each node stored in the tree has a position, width & height.
-        /// </summary>
-        internal class QuadNode
-        {
-            RectangleF bounds;
-            QuadNode next; // linked in a circular list.
-            T node; // the actual visual object being stored here.
- 
-            /// <summary>
-            /// Construct new QuadNode to wrap the given node with given bounds
-            /// </summary>
-            /// <param name="node">The node</param>
-            /// <param name="bounds">The bounds of that node</param>
-            public QuadNode(T node, RectangleF bounds)
-            {
-                this.node = node;
-                this.bounds = bounds;
-            }
- 
-            /// <summary>
-            /// The node
-            /// </summary>
-            public T Node
-            {
-                get { return this.node; }
-                set { this.node = value; }
-            }
- 
-            /// <summary>
-            /// The RectangleF bounds of the node
-            /// </summary>
-            public RectangleF Bounds
-            {
-                get { return this.bounds; }
-            }
- 
-            /// <summary>
-            /// QuadNodes form a linked list in the Quadrant.
-            /// </summary>
-            public QuadNode Next
-            {
-                get { return this.next; }
-                set { this.next = value; }
-            }
-        }
- 
- 
-        /// <summary>
-        /// The canvas is split up into four Quadrants and objects are stored in the quadrant that contains them
-        /// and each quadrant is split up into four child Quadrants recurrsively.  Objects that overlap more than
-        /// one quadrant are stored in the this.nodes list for this Quadrant.
-        /// </summary>
-        internal class Quadrant
-        {
-            Quadrant parent;
-            RectangleF bounds; // quadrant bounds.
- 
-            QuadNode nodes; // nodes that overlap the sub quadrant boundaries.
- 
-            // The quadrant is subdivided when nodes are inserted that are 
-            // completely contained within those subdivisions.
-            Quadrant topLeft;
-            Quadrant topRight;
-            Quadrant bottomLeft;
-            Quadrant bottomRight;
 
-            /// <summary>
-            /// Construct new Quadrant with a given bounds all nodes stored inside this quadrant
-            /// will fit inside this bounds.  
-            /// </summary>
-            /// <param name="parent">The parent quadrant (if any)</param>
-            /// <param name="bounds">The bounds of this quadrant</param>
-            public Quadrant(Quadrant parent, RectangleF bounds)
+        /// <summary>
+        /// Count how many branches are in the QuadTree.
+        /// </summary>
+        public int CountBranches()
+        {
+            int count = 0;
+            CountBranches(root, ref count);
+            return count;
+        }
+
+        void CountBranches(Branch branch, ref int count)
+        {
+            ++count;
+            if (branch.Split)
+                for (int i = 0; i < 4; ++i)
+                    if (branch.Branches[i] != null)
+                        CountBranches(branch.Branches[i], ref count);
+        }
+
+        static Branch CreateBranch(QuadTree<T> tree, Branch parent, int branchDepth, ref Quad quad)
+        {
+            var branch = branchPool.Count > 0 ? branchPool.Pop() : new Branch();
+            branch.Tree   = tree;
+            branch.Parent = parent;
+            branch.Split  = false;
+            branch.Depth  = branchDepth;
+            float midX = quad.MinX + (quad.MaxX - quad.MinX) * 0.5f;
+            float midY = quad.MinY + (quad.MaxY - quad.MinY) * 0.5f;
+            branch.Quads[0].Set(quad.MinX, quad.MinY, midX, midY);
+            branch.Quads[1].Set(midX, quad.MinY, quad.MaxX, midY);
+            branch.Quads[2].Set(midX, midY, quad.MaxX, quad.MaxY);
+            branch.Quads[3].Set(quad.MinX, midY, midX, quad.MaxY);
+            return branch;
+        }
+
+        static Leaf CreateLeaf(T value, ref Quad quad)
+        {
+            var leaf = leafPool.Count > 0 ? leafPool.Pop() : new Leaf();
+            leaf.Value = value;
+            leaf.Quad  = quad;
+            return leaf;
+        }
+
+        internal class Branch
+        {
+            internal QuadTree<T> Tree;
+            internal Branch      Parent;
+            internal Quad[]      Quads    = new Quad[4];
+            internal Branch[]    Branches = new Branch[4];
+            internal List<Leaf>  Leaves   = new List<Leaf>();
+            internal bool        Split;
+            internal int         Depth;
+
+            internal void Clear()
             {
-                this.parent = parent;
-                Debug.Assert(bounds.Width != 0 && bounds.Height != 0, "Cannot have empty bound");
-                if (bounds.Width == 0 || bounds.Height == 0)
+                Tree   = null;
+                Parent = null;
+                Split  = false;
+
+                for (int i = 0; i < 4; ++i)
                 {
-                    throw new Exception("BoundsMustBeNonZero");
+                    if (Branches[i] != null)
+                    {
+                        branchPool.Push(Branches[i]);
+                        Branches[i].Clear();
+                        Branches[i] = null;
+                    }
                 }
-                this.bounds = bounds;
-            }
- 
-            /// <summary>
-            /// The parent Quadrant or null if this is the root
-            /// </summary>
-            internal Quadrant Parent
-            {
-                get { return this.parent; }
-            }
- 
-            /// <summary>
-            /// The bounds of this quadrant
-            /// </summary>
-            internal RectangleF Bounds
-            {
-                get { return this.bounds; }
-            }
- 
-            /// <summary>
-            /// Insert the given node
-            /// </summary>
-            /// <param name="node">The node </param>
-            /// <param name="bounds">The bounds of that node</param>
-            /// <returns></returns>
-            internal Quadrant Insert(T node, RectangleF bounds)
-            {
- 
-                Debug.Assert(bounds.Width != 0 && bounds.Height != 0, "Cannot have empty bound");
-                if (bounds.Width == 0 || bounds.Height == 0)
+
+                for (int i = 0; i < Leaves.Count; ++i)
                 {
-                    throw new Exception("BoundsMustBeNonZero");
+                    leafPool.Push(Leaves[i]);
+                    Leaves[i].Branch = null;
+                    Leaves[i].Value  = default(T);
                 }
- 
-                Quadrant toInsert = this;
-                while (true)
+
+                Leaves.Clear();
+            }
+
+            internal void Insert(Leaf leaf)
+            {
+                //If this branch is already split
+                if (Split)
                 {
-                    float w = toInsert.bounds.Width / 2f;
-                    if (w < 1)
+                    for (int i = 0; i < 4; ++i)
                     {
-                        w = 1;
-                    }
-                    float h = toInsert.bounds.Height / 2f;
-                    if (h < 1)
-                    {
-                        h = 1;
-                    }
- 
-                    // assumption that the RectangleF struct is almost as fast as doing the operations
-                    // manually since RectangleF is a value type.
- 
-                    RectangleF topLeft = new RectangleF(toInsert.bounds.Left, toInsert.bounds.Top, w, h);
-                    RectangleF topRight = new RectangleF(toInsert.bounds.Left + w, toInsert.bounds.Top, w, h);
-                    RectangleF bottomLeft = new RectangleF(toInsert.bounds.Left, toInsert.bounds.Top + h, w, h);
-                    RectangleF bottomRight = new RectangleF(toInsert.bounds.Left + w, toInsert.bounds.Top + h, w, h);
- 
-                    Quadrant child = null;
- 
-                    // See if any child quadrants completely contain this node.
-                    if (topLeft.Contains(bounds))
-                    {
-                        if (toInsert.topLeft == null)
+                        if (Quads[i].Contains(ref leaf.Quad))
                         {
-                            toInsert.topLeft = new Quadrant(toInsert, topLeft);
+                            if (Branches[i] == null)
+                                Branches[i] = CreateBranch(Tree, this, Depth + 1, ref Quads[i]);
+                            Branches[i].Insert(leaf);
+                            return;
                         }
-                        child = toInsert.topLeft;
                     }
-                    else if (topRight.Contains(bounds))
+
+                    Leaves.Add(leaf);
+                    leaf.Branch = this;
+                }
+                else
+                {
+                    //Add the leaf to this node
+                    Leaves.Add(leaf);
+                    leaf.Branch = this;
+
+                    //Once I have reached capacity, split the node
+                    if (Leaves.Count >= Tree.splitCount && Depth < Tree.depthLimit)
                     {
-                        if (toInsert.topRight == null)
-                        {
-                            toInsert.topRight = new Quadrant(toInsert, topRight);
-                        }
-                        child = toInsert.topRight;
-                    }
-                    else if (bottomLeft.Contains(bounds))
-                    {
-                        if (toInsert.bottomLeft == null)
-                        {
-                            toInsert.bottomLeft = new Quadrant(toInsert, bottomLeft);
-                        }
-                        child = toInsert.bottomLeft;
-                    }
-                    else if (bottomRight.Contains(bounds))
-                    {
-                        if (toInsert.bottomRight == null)
-                        {
-                            toInsert.bottomRight = new Quadrant(toInsert, bottomRight);
-                        }
-                        child = toInsert.bottomRight;
-                    }
- 
-                    if (child != null)
-                    {
-                        toInsert = child;
-                    }
-                    else
-                    {
-                        QuadNode n = new QuadNode(node, bounds);
-                        if (toInsert.nodes == null)
-                        {
-                            n.Next = n;
-                        }
-                        else
-                        {
-                            // link up in circular link list.
-                            QuadNode x = toInsert.nodes;
-                            n.Next = x.Next;
-                            x.Next = n;
-                        }
-                        toInsert.nodes = n;
-                        return toInsert;
+                        Split = true;
                     }
                 }
             }
- 
-            /// <summary>
-            /// Returns all nodes in this quadrant that intersect the given bounds.
-            /// The nodes are returned in pretty much random order as far as the caller is concerned.
-            /// </summary>
-            /// <param name="nodes">List of nodes found in the given bounds</param>
-            /// <param name="bounds">The bounds that contains the nodes you want returned</param>
-            internal void GetIntersectingNodes(List<QuadNode> nodes, RectangleF bounds)
+
+            internal void SearchQuad(ref Quad quad, List<T> values)
             {
-                if (bounds.IsEmpty) return;
-                float w = this.bounds.Width / 2f;
-                float h = this.bounds.Height / 2f;
- 
-                // assumption that the RectangleF struct is almost as fast as doing the operations
-                // manually since RectangleF is a value type.
- 
-                RectangleF topLeft = new RectangleF(this.bounds.Left, this.bounds.Top, w, h);
-                RectangleF topRight = new RectangleF(this.bounds.Left + w, this.bounds.Top, w, h);
-                RectangleF bottomLeft = new RectangleF(this.bounds.Left, this.bounds.Top + h, w, h);
-                RectangleF bottomRight = new RectangleF(this.bounds.Left + w, this.bounds.Top + h, w, h);
- 
-                // See if any child quadrants completely contain this node.
-                if (topLeft.IntersectsWith(bounds) && this.topLeft != null)
-                {
-                    this.topLeft.GetIntersectingNodes(nodes, bounds);
-                }
- 
-                if (topRight.IntersectsWith(bounds) && this.topRight != null)
-                {
-                    this.topRight.GetIntersectingNodes(nodes, bounds);
-                }
- 
-                if (bottomLeft.IntersectsWith(bounds) && this.bottomLeft != null)
-                {
-                    this.bottomLeft.GetIntersectingNodes(nodes, bounds);
-                }
- 
-                if (bottomRight.IntersectsWith(bounds) && this.bottomRight != null)
-                {
-                    this.bottomRight.GetIntersectingNodes(nodes, bounds);
-                }
- 
-                GetIntersectingNodes(this.nodes, nodes, bounds);
+                if (Leaves.Count > 0)
+                    for (int i = 0; i < Leaves.Count; ++i)
+                        if (quad.Intersects(ref Leaves[i].Quad))
+                            values.Add(Leaves[i].Value);
+                for (int i = 0; i < 4; ++i)
+                    if (Branches[i] != null)
+                        Branches[i].SearchQuad(ref quad, values);
             }
- 
-            /// <summary>
-            /// Walk the given linked list of QuadNodes and check them against the given bounds.
-            /// Add all nodes that intersect the bounds in to the list.
-            /// </summary>
-            /// <param name="last">The last QuadNode in a circularly linked list</param>
-            /// <param name="nodes">The resulting nodes are added to this list</param>
-            /// <param name="bounds">The bounds to test against each node</param>
-            static void GetIntersectingNodes(QuadNode last, List<QuadNode> nodes, RectangleF bounds)
+
+            internal void SearchPoint(float x, float y, List<T> values)
             {
-                if (last != null)
-                {
-                    QuadNode n = last;
-                    do
-                    {
-                        n = n.Next; // first node.
-                        if (n.Bounds.IntersectsWith(bounds))
-                        {
-                            nodes.Add(n);
-                        }
-                    } while (n != last);
-                }
+                if (Leaves.Count > 0)
+                    for (int i = 0; i < Leaves.Count; ++i)
+                        if (Leaves[i].Quad.Contains(x, y))
+                            values.Add(Leaves[i].Value);
+                for (int i = 0; i < 4; ++i)
+                    if (Branches[i] != null)
+                        Branches[i].SearchPoint(x, y, values);
             }
- 
-            /// <summary>
-            /// Return true if there are any nodes in this Quadrant that intersect the given bounds.
-            /// </summary>
-            /// <param name="bounds">The bounds to test</param>
-            /// <returns>boolean</returns>
-            internal bool HasIntersectingNodes(RectangleF bounds)
-            {
-                if (bounds.IsEmpty) return false;
-                float w = this.bounds.Width / 2f;
-                float h = this.bounds.Height / 2f;
- 
-                // assumption that the RectangleF struct is almost as fast as doing the operations
-                // manually since RectangleF is a value type.
- 
-                RectangleF topLeft = new RectangleF(this.bounds.Left, this.bounds.Top, w, h);
-                RectangleF topRight = new RectangleF(this.bounds.Left + w, this.bounds.Top, w, h);
-                RectangleF bottomLeft = new RectangleF(this.bounds.Left, this.bounds.Top + h, w, h);
-                RectangleF bottomRight = new RectangleF(this.bounds.Left + w, this.bounds.Top + h, w, h);
- 
-                bool found = false;
- 
-                // See if any child quadrants completely contain this node.
-                if (topLeft.IntersectsWith(bounds) && this.topLeft != null)
-                {
-                    found = this.topLeft.HasIntersectingNodes(bounds);
-                }
- 
-                if (!found && topRight.IntersectsWith(bounds) && this.topRight != null)
-                {
-                    found = this.topRight.HasIntersectingNodes(bounds);
-                }
- 
-                if (!found && bottomLeft.IntersectsWith(bounds) && this.bottomLeft != null)
-                {
-                    found = this.bottomLeft.HasIntersectingNodes(bounds);
-                }
- 
-                if (!found && bottomRight.IntersectsWith(bounds) && this.bottomRight != null)
-                {
-                    found = this.bottomRight.HasIntersectingNodes(bounds);
-                }
-                if (!found)
-                {
-                    found = HasIntersectingNodes(this.nodes, bounds);
-                }
-                return found;
-            }
- 
-            /// <summary>
-            /// Walk the given linked list and test each node against the given bounds/
-            /// </summary>
-            /// <param name="last">The last node in the circularly linked list.</param>
-            /// <param name="bounds">Bounds to test</param>
-            /// <returns>Return true if a node in the list intersects the bounds</returns>
-            static bool HasIntersectingNodes(QuadNode last, RectangleF bounds)
-            {
-                if (last != null)
-                {
-                    QuadNode n = last;
-                    do
-                    {
-                        n = n.Next; // first node.
-                        if (n.Bounds.IntersectsWith(bounds))
-                        {
-                            return true;
-                        }
-                    } while (n != last);
-                }
-                return false;
-            }
- 
-            /// <summary>
-            /// Remove the given node from this Quadrant.
-            /// </summary>
-            /// <param name="node">The node to remove</param>
-            /// <returns>Returns true if the node was found and removed.</returns>
-            internal bool RemoveNode(T node)
-            {
-                bool rc = false;
-                if (this.nodes != null)
-                {
-                    QuadNode p = this.nodes;
-                    while (p.Next.Node != node && p.Next != this.nodes)
-                    {
-                        p = p.Next;
-                    }
-                    if (p.Next.Node == node)
-                    {
-                        rc = true;
-                        QuadNode n = p.Next;
-                        if (p == n)
-                        {
-                            // list goes to empty
-                            this.nodes = null;
-                        }
-                        else
-                        {
-                            if (this.nodes == n) this.nodes = p;
-                            p.Next = n.Next;
-                        }
-                    }
-                }
-                return rc;
-            }
- 
+        }
+
+        internal class Leaf
+        {
+            internal Branch Branch;
+            internal T      Value;
+            internal Quad   Quad;
+        }
+    }
+
+    /// <summary>
+    /// Used by the QuadTree to represent a rectangular area.
+    /// </summary>
+    public struct Quad
+    {
+        public float MinX;
+        public float MinY;
+        public float MaxX;
+        public float MaxY;
+
+        /// <summary>
+        /// Construct a new Quad.
+        /// </summary>
+        /// <param name="minX">Minimum x.</param>
+        /// <param name="minY">Minimum y.</param>
+        /// <param name="maxX">Max x.</param>
+        /// <param name="maxY">Max y.</param>
+        public Quad(float minX, float minY, float maxX, float maxY)
+        {
+            MinX = minX;
+            MinY = minY;
+            MaxX = maxX;
+            MaxY = maxY;
+        }
+
+        /// <summary>
+        /// Construct a new Quad.
+        /// </summary>
+        /// <param name="min">Bottom left quad corner</param>
+        /// <param name="max">Top right quad corner</param>
+        public Quad(Vector2 min, Vector2 max)
+        {
+            MinX = min.x;
+            MinY = min.y;
+            MaxX = max.x;
+            MaxY = max.y;
+        }
+
+        /// <summary>
+        /// Set the Quad's position.
+        /// </summary>
+        /// <param name="minX">Minimum x.</param>
+        /// <param name="minY">Minimum y.</param>
+        /// <param name="maxX">Max x.</param>
+        /// <param name="maxY">Max y.</param>
+        public void Set(float minX, float minY, float maxX, float maxY)
+        {
+            MinX = minX;
+            MinY = minY;
+            MaxX = maxX;
+            MaxY = maxY;
+        }
+        
+        /// <summary>
+        /// Set the Quad's position.
+        /// </summary>
+        /// <param name="min">Bottom left quad corner</param>
+        /// <param name="max">Top right quad corner</param>
+        public void Set(Vector2 min, Vector2 max)
+        {
+            MinX = min.x;
+            MinY = min.y;
+            MaxX = max.x;
+            MaxY = max.y;
+        }
+
+        /// <summary>
+        /// Check if this Quad intersects with another.
+        /// </summary>
+        public bool Intersects(ref Quad other)
+        {
+            return MinX <= other.MaxX && MinY <= other.MaxY && MaxX >= other.MinX && MaxY >= other.MinY;
+        }
+
+        /// <summary>
+        /// Check if this Quad can completely contain another.
+        /// </summary>
+        public bool Contains(ref Quad other)
+        {
+            return other.MinX >= MinX && other.MinY >= MinY && other.MaxX <= MaxX && other.MaxY <= MaxY;
+        }
+
+        /// <summary>
+        /// Check if this Quad contains the point.
+        /// </summary>
+        public bool Contains(float x, float y)
+        {
+            return x > MinX && y > MinY && x < MaxX && y < MaxY;
         }
     }
 }
