@@ -23,13 +23,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using ClipperLib;
 using DeusaldSharp;
-using Microsoft.QuadTree;
+using QuadTree;
 
 namespace DeusaldNav2D
 {
+    //Todo: add optimization for building groups
     public class Nav2D
     {
         #region Types
@@ -50,15 +50,21 @@ namespace DeusaldNav2D
 
         #region Variables
 
-        internal readonly Dictionary<uint, ElementsGroup> elementsGroups;
-        internal readonly List<uint>                      elementsGroupToRebuild;
-        internal readonly Clipper                         clipper;
-        internal readonly PolyTree                        polyTree;
+        #if DEBUG
+        #pragma warning disable 67
+
+        public event Action<string> DebugLog;
+
+        #pragma warning restore 67
+        #endif
+
+        internal readonly List<ElementsGroup> elementsGroups;
+        internal readonly Clipper             clipper;
+        internal readonly PolyTree            polyTree;
 
         private bool                 _AreObstaclesDirty;
         private bool                 _AreSurfacesDirty;
         private List<List<IntPoint>> _ExitExtendPoints;
-        private uint                 _NextGroupId;
         private uint                 _ConnectionOrderId;
 
         private readonly Vector2                                               _LeftBottomMapCorner;
@@ -67,8 +73,6 @@ namespace DeusaldNav2D
         private readonly List<NavElement>                                      _Surfaces;
         private readonly Accuracy                                              _Accuracy;
         private readonly ClipperOffset                                         _ClipperOffset;
-        private readonly Queue<NavElement>                                     _ElementsToRebuildGroups;
-        private readonly HashSet<NavElement>                                   _ElementsOnRebuildGroupsQueue;
         private readonly List<NavPoint>                                        _NavPoints;
         private readonly Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData> _Connections;
 
@@ -90,8 +94,7 @@ namespace DeusaldNav2D
         public NavElement[] Obstacles           => _Obstacles.ToArray();
         public NavElement[] Surfaces            => _Surfaces.ToArray();
 
-        internal QuadTree<NavElement> QuadTree    { get; }
-        internal uint                 NextGroupId => _NextGroupId++;
+        internal QuadTree<NavElement> QuadTree { get; }
 
         #endregion Properties
 
@@ -99,68 +102,30 @@ namespace DeusaldNav2D
 
         public Nav2D(Vector2 leftBottomMapCorner, Vector2 rightUpperMapCorner, float agentRadius, Accuracy accuracy)
         {
-            _LeftBottomMapCorner          = leftBottomMapCorner;
-            _RightUpperMapCorner          = rightUpperMapCorner;
-            AgentRadius                   = agentRadius;
-            _NextGroupId                  = 1;
-            _Obstacles                    = new List<NavElement>();
-            _Surfaces                     = new List<NavElement>();
-            _ClipperOffset                = new ClipperOffset();
-            _ExitExtendPoints             = new List<List<IntPoint>>();
-            elementsGroups                = new Dictionary<uint, ElementsGroup>();
-            _ElementsToRebuildGroups      = new Queue<NavElement>();
-            _ElementsOnRebuildGroupsQueue = new HashSet<NavElement>();
-            _Connections                  = new Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData>();
-            elementsGroupToRebuild        = new List<uint>();
-            _NavPoints                    = new List<NavPoint>();
-            clipper                       = new Clipper();
-            polyTree                      = new PolyTree();
-            QuadTree                      = new QuadTree<NavElement>();
-            _Accuracy                     = accuracy;
-            QuadTree.Bounds               = GetRectFromMinMax(_LeftBottomMapCorner, _RightUpperMapCorner);
+            _LeftBottomMapCorner = leftBottomMapCorner;
+            _RightUpperMapCorner = rightUpperMapCorner;
+            AgentRadius          = agentRadius;
+            _Obstacles           = new List<NavElement>();
+            _Surfaces            = new List<NavElement>();
+            _ClipperOffset       = new ClipperOffset();
+            _ExitExtendPoints    = new List<List<IntPoint>>();
+            elementsGroups       = new List<ElementsGroup>();
+            _Connections         = new Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData>();
+            _NavPoints           = new List<NavPoint>();
+            clipper              = new Clipper();
+            polyTree             = new PolyTree();
+            QuadTree             = new QuadTree<NavElement>(10, 6, GetQuadTreeBounds(_LeftBottomMapCorner, _RightUpperMapCorner));
+            _Accuracy            = accuracy;
         }
 
         #endregion Init Methods
 
         #region Public Methods
 
-        public void Update(bool skipRefresh = false)
+        public void Update()
         {
-            if (!skipRefresh)
-            {
-                if (!_AreObstaclesDirty && !_AreSurfacesDirty) return;
-
-                if (_AreObstaclesDirty)
-                {
-                    foreach (var obstacle in _Obstacles)
-                        obstacle.RefreshNavElement();
-
-                    _AreObstaclesDirty = false;
-                }
-
-                if (_AreSurfacesDirty)
-                {
-                    foreach (var surface in _Surfaces)
-                        surface.RefreshNavElement();
-
-                    _AreSurfacesDirty = false;
-                }
-            }
-
-            while (_ElementsToRebuildGroups.Count != 0)
-                _ElementsToRebuildGroups.Dequeue().RebuildTheElementGroup();
-
-            _ElementsOnRebuildGroupsQueue.Clear();
-
-            foreach (var id in elementsGroupToRebuild)
-            {
-                if (!elementsGroups.ContainsKey(id)) continue;
-                elementsGroups[id].Rebuild();
-            }
-
-            elementsGroupToRebuild.Clear();
-
-            RebuildNavPoints();
+            if (!_AreObstaclesDirty && !_AreSurfacesDirty) return;
+            InnerUpdate(false);
         }
 
         public NavElement AddObstacle(Vector2[] points, Vector2 position, float rotation, float extraOffset = 0f)
@@ -206,18 +171,15 @@ namespace DeusaldNav2D
             if (navElement.NavType == NavElement.Type.Obstacle)
             {
                 navElement.DirtyFlagEnabled -= MarkObstaclesDirty;
-                elementsGroups[navElement.elementGroupId].DismantleGroup();
                 _Obstacles.Remove(navElement);
             }
             else if (navElement.NavType == NavElement.Type.Surface)
             {
                 navElement.DirtyFlagEnabled -= MarkSurfacesDirty;
-                elementsGroups[navElement.elementGroupId].DismantleGroup();
                 _Surfaces.Remove(navElement);
             }
 
-            QuadTree.Remove(navElement);
-            Update(true);
+            InnerUpdate(true);
         }
 
         internal IntPoint ParseToIntPoint(Vector2 vector2)
@@ -248,22 +210,6 @@ namespace DeusaldNav2D
 
             for (int i = 0; i < _ExitExtendPoints[0].Count; ++i)
                 extendedPoints[i] = ParseToVector2(_ExitExtendPoints[0][i]);
-        }
-
-        internal RectangleF GetRectFromMinMax(Vector2 leftBottom, Vector2 rightTop)
-        {
-            float x      = (leftBottom.x + rightTop.x) / 2f;
-            float y      = (leftBottom.y + rightTop.y) / 2f;
-            float width  = MathF.Abs(leftBottom.x - rightTop.x);
-            float height = MathF.Abs(leftBottom.y - rightTop.y);
-            return new RectangleF(x, y, width, height);
-        }
-
-        internal void AddElementOnRebuildGroupsQueue(NavElement element)
-        {
-            if (_ElementsOnRebuildGroupsQueue.Contains(element)) return;
-            _ElementsOnRebuildGroupsQueue.Add(element);
-            _ElementsToRebuildGroups.Enqueue(element);
         }
 
         #endregion Public Methods
@@ -298,6 +244,67 @@ namespace DeusaldNav2D
             return result;
         }
 
+        private Quad GetQuadTreeBounds(Vector2 leftBottom, Vector2 rightTop)
+        {
+            const float rootQuadTreeMultiplier = 2f;
+
+            float x      = (leftBottom.x + rightTop.x) / 2f;
+            float y      = (leftBottom.y + rightTop.y) / 2f;
+            float width  = MathF.Abs(leftBottom.x - rightTop.x);
+            float height = MathF.Abs(leftBottom.y - rightTop.y);
+
+            width  *= rootQuadTreeMultiplier;
+            height *= rootQuadTreeMultiplier;
+
+            float halfWidth  = width / 2f;
+            float halfHeight = height / 2f;
+
+            return new Quad(x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight);
+        }
+
+        private void InnerUpdate(bool skipRefreshNavElement)
+        {
+            QuadTree.Clear();
+
+
+            foreach (var obstacle in _Obstacles)
+            {
+                if (_AreObstaclesDirty && !skipRefreshNavElement)
+                    obstacle.RefreshNavElement();
+
+                QuadTree.Insert(obstacle, obstacle.Bounds);
+            }
+
+            _AreObstaclesDirty = false;
+
+            foreach (var surface in _Surfaces)
+            {
+                if (_AreSurfacesDirty && !skipRefreshNavElement)
+                    surface.RefreshNavElement();
+
+                QuadTree.Insert(surface, surface.Bounds);
+            }
+
+            _AreSurfacesDirty = false;
+
+            HashSet<NavElement> groupedElements = new HashSet<NavElement>();
+            elementsGroups.Clear();
+
+            foreach (var obstacle in _Obstacles)
+            {
+                if (groupedElements.Contains(obstacle)) continue;
+                obstacle.RebuildTheElementGroup(ref groupedElements);
+            }
+
+            foreach (var surface in _Surfaces)
+            {
+                if (groupedElements.Contains(surface)) continue;
+                surface.RebuildTheElementGroup(ref groupedElements);
+            }
+
+            RebuildNavPoints();
+        }
+
         private void AddToConnectionDictionary(NavPoint first, NavPoint second)
         {
             if (first.Id < second.Id)
@@ -316,7 +323,7 @@ namespace DeusaldNav2D
 
         private void CreateEdgePoints()
         {
-            foreach (var element in elementsGroups.Values)
+            foreach (var element in elementsGroups)
             {
                 for (var i = 0; i < element.NavSurfaces.Count; ++i)
                 {

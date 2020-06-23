@@ -31,29 +31,26 @@ namespace DeusaldNav2D
     {
         #region Variables
 
-        private readonly HashSet<NavElement> _Obstacles;
-        private readonly HashSet<NavElement> _Surfaces;
-        private readonly Nav2D               _Nav2D;
-        private readonly uint                _Id;
+        private readonly Nav2D _Nav2D;
 
         #endregion Variables
 
         #region Properties
-
-        public uint           Id           => _Id;
-        public List<NavShape> NavObstacles { get; }
-        public List<NavShape> NavSurfaces  { get; }
+        
+        public List<NavShape>      NavObstacles { get; }
+        public List<NavShape>      NavSurfaces  { get; }
+        public HashSet<NavElement> Obstacles    { get; }
+        public HashSet<NavElement> Surfaces     { get; }
 
         #endregion Properties
 
         #region Init Methods
 
-        internal ElementsGroup(Nav2D nav2D, uint id)
+        internal ElementsGroup(Nav2D nav2D)
         {
             _Nav2D       = nav2D;
-            _Id          = id;
-            _Obstacles   = new HashSet<NavElement>();
-            _Surfaces    = new HashSet<NavElement>();
+            Obstacles    = new HashSet<NavElement>();
+            Surfaces     = new HashSet<NavElement>();
             NavObstacles = new List<NavShape>();
             NavSurfaces  = new List<NavShape>();
         }
@@ -65,80 +62,40 @@ namespace DeusaldNav2D
         public void AddElement(NavElement element)
         {
             if (element.NavType == NavElement.Type.Obstacle)
-                _Obstacles.Add(element);
+                Obstacles.Add(element);
             else if (element.NavType == NavElement.Type.Surface)
-                _Surfaces.Add(element);
+                Surfaces.Add(element);
         }
 
-        public void DismantleGroup()
-        {
-            List<NavElement> obstacles = new List<NavElement>(_Obstacles);
-            List<NavElement> surfaces  = new List<NavElement>(_Surfaces);
-
-            foreach (var obstacle in obstacles)
-            {
-                _Nav2D.AddElementOnRebuildGroupsQueue(obstacle);
-                obstacle.elementGroupId = 0;
-            }
-
-            foreach (var surface in surfaces)
-            {
-                _Nav2D.AddElementOnRebuildGroupsQueue(surface);
-                surface.elementGroupId = 0;
-            }
-            
-            _Nav2D.elementsGroups.Remove(Id);
-        }
-
-        public void MergeToThis(ElementsGroup otherGroup)
-        {
-            foreach (var obstacle in otherGroup._Obstacles)
-            {
-                obstacle.elementGroupId = Id;
-                _Obstacles.Add(obstacle);
-            }
-
-
-            foreach (var surface in otherGroup._Surfaces)
-            {
-                surface.elementGroupId = Id;
-                _Surfaces.Add(surface);
-            }
-            
-            otherGroup._Obstacles.Clear();
-            otherGroup._Surfaces.Clear();
-            
-        }
-        
-        public void Rebuild()
+        public void Build()
         {
             NavObstacles.Clear();
             NavSurfaces.Clear();
 
-            if (_Obstacles.Count == 1 && _Surfaces.Count == 0)
+            if (Obstacles.Count == 1 && Surfaces.Count == 0)
             {
-                NavObstacles.Add(new NavShape(_Obstacles.First().navElementPoints, NavElement.Type.Obstacle));
+                NavObstacles.Add(new NavShape(Obstacles.First().navElementPoints, NavElement.Type.Obstacle));
                 return;
             }
 
-            if (_Obstacles.Count == 0 && _Surfaces.Count > 0)
+            if (Obstacles.Count == 0 && Surfaces.Count > 0)
             {
-                foreach (var surface in _Surfaces)
+                foreach (var surface in Surfaces)
                     NavSurfaces.Add(new NavShape(surface.navElementPoints, NavElement.Type.Surface));
 
                 return;
             }
 
-            List<NavElement>     obstacles          = new List<NavElement>(_Obstacles);
-            List<NavElement>     surfaces           = new List<NavElement>(_Surfaces);
+            List<NavElement>     obstacles          = new List<NavElement>(Obstacles);
+            List<NavElement>     surfaces           = new List<NavElement>(Surfaces);
             List<List<IntPoint>> obstaclesIntPoints = new List<List<IntPoint>>();
 
             foreach (var obstacle in obstacles)
                 obstaclesIntPoints.Add(obstacle.intNavElementPoints);
 
-            if (_Obstacles.Count > 0)
+            if (Obstacles.Count > 0)
             {
-                if (_Obstacles.Count == 1)
+                if (Obstacles.Count == 1)
                     NavObstacles.Add(new NavShape(obstacles[0].navElementPoints, NavElement.Type.Obstacle));
                 else
                 {
@@ -172,7 +129,7 @@ namespace DeusaldNav2D
                 if (_Nav2D.polyTree.IsHole)
                 {
                     foreach (var child in _Nav2D.polyTree.Childs)
-                        NavSurfaces.Add(new NavShape(_Nav2D, child.Contour, false, null,  null,NavElement.Type.Surface));
+                        NavSurfaces.Add(new NavShape(_Nav2D, child.Contour, false, null, null, NavElement.Type.Surface));
                 }
                 else // We got one big containing everyone
                     NavSurfaces.Add(new NavShape(_Nav2D, _Nav2D.polyTree.Contour, false, null, null, NavElement.Type.Surface));
