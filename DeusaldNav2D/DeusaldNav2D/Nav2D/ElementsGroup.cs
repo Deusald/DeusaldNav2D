@@ -31,16 +31,20 @@ namespace DeusaldNav2D
     {
         #region Variables
 
+        public bool isDirty;
+
         private readonly Nav2D _Nav2D;
 
         #endregion Variables
 
         #region Properties
-        
-        public List<NavShape>      NavObstacles { get; }
-        public List<NavShape>      NavSurfaces  { get; }
-        public HashSet<NavElement> Obstacles    { get; }
-        public HashSet<NavElement> Surfaces     { get; }
+
+        public uint                Id               { get; }
+        public List<NavShape>      NavObstacles     { get; }
+        public List<NavShape>      NavSurfaces      { get; }
+        public HashSet<NavElement> Obstacles        { get; }
+        public HashSet<NavElement> Surfaces         { get; }
+        public int                 NumberOfElements => Obstacles.Count + Surfaces.Count;
 
         #endregion Properties
 
@@ -49,22 +53,32 @@ namespace DeusaldNav2D
         internal ElementsGroup(Nav2D nav2D)
         {
             _Nav2D       = nav2D;
+            Id           = _Nav2D.NextElementsGroupId;
             Obstacles    = new HashSet<NavElement>();
             Surfaces     = new HashSet<NavElement>();
             NavObstacles = new List<NavShape>();
             NavSurfaces  = new List<NavShape>();
+            isDirty      = true;
         }
 
         #endregion Init Methods
 
         #region Public Methods
 
-        public void AddElement(NavElement element)
+        public void Clear()
         {
-            if (element.NavType == NavElement.Type.Obstacle)
-                Obstacles.Add(element);
-            else if (element.NavType == NavElement.Type.Surface)
-                Surfaces.Add(element);
+            NavObstacles.Clear();
+            NavSurfaces.Clear();
+            Obstacles.Clear();
+            Surfaces.Clear();
+        }
+
+        public void AddElements(List<NavElement> elements)
+        {
+            foreach (var element in elements)
+                AddElement(element);
+
+            isDirty = false;
         }
 
         public void Build()
@@ -137,5 +151,19 @@ namespace DeusaldNav2D
         }
 
         #endregion Public Methods
+
+        #region Private Methods
+
+        private void AddElement(NavElement element)
+        {
+            if (element.NavType == NavElement.Type.Obstacle)
+                Obstacles.Add(element);
+            else if (element.NavType == NavElement.Type.Surface)
+                Surfaces.Add(element);
+
+            element.elementsGroupId = Id;
+        }
+
+        #endregion Private Methods
     }
 }

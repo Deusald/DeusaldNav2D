@@ -61,11 +61,13 @@ namespace DeusaldNav2D
         internal readonly List<ElementsGroup> elementsGroups;
         internal readonly Clipper             clipper;
         internal readonly PolyTree            polyTree;
+        internal readonly Stack<ElementsGroup> elementsGroupPull;
 
         private bool                 _AreObstaclesDirty;
         private bool                 _AreSurfacesDirty;
         private List<List<IntPoint>> _ExitExtendPoints;
         private uint                 _ConnectionOrderId;
+        private uint                 _NextElementsGroupId;
 
         private readonly Vector2                                               _LeftBottomMapCorner;
         private readonly Vector2                                               _RightUpperMapCorner;
@@ -75,6 +77,11 @@ namespace DeusaldNav2D
         private readonly ClipperOffset                                         _ClipperOffset;
         private readonly List<NavPoint>                                        _NavPoints;
         private readonly Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData> _Connections;
+        private readonly HashSet<NavElement>                                   _TmpGroupedElements;
+        private readonly List<NavElement>                                      _TmpLocalGroupedElements;
+        private readonly Queue<NavElement>                                     _TmpCollidedElements;
+        private readonly List<NavElement>                                      _TmpSearchList;
+        private readonly Dictionary<uint, ElementsGroup>                       _TmpElementsGroups;
 
         #endregion Variables
 
@@ -94,7 +101,8 @@ namespace DeusaldNav2D
         public NavElement[] Obstacles           => _Obstacles.ToArray();
         public NavElement[] Surfaces            => _Surfaces.ToArray();
 
-        internal QuadTree<NavElement> QuadTree { get; }
+        internal QuadTree<NavElement> QuadTree            { get; }
+        internal uint                 NextElementsGroupId => _NextElementsGroupId++;
 
         #endregion Properties
 
@@ -102,20 +110,27 @@ namespace DeusaldNav2D
 
         public Nav2D(Vector2 leftBottomMapCorner, Vector2 rightUpperMapCorner, float agentRadius, Accuracy accuracy)
         {
-            _LeftBottomMapCorner = leftBottomMapCorner;
-            _RightUpperMapCorner = rightUpperMapCorner;
-            AgentRadius          = agentRadius;
-            _Obstacles           = new List<NavElement>();
-            _Surfaces            = new List<NavElement>();
-            _ClipperOffset       = new ClipperOffset();
-            _ExitExtendPoints    = new List<List<IntPoint>>();
-            elementsGroups       = new List<ElementsGroup>();
-            _Connections         = new Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData>();
-            _NavPoints           = new List<NavPoint>();
-            clipper              = new Clipper();
-            polyTree             = new PolyTree();
-            QuadTree             = new QuadTree<NavElement>(10, 6, GetQuadTreeBounds(_LeftBottomMapCorner, _RightUpperMapCorner));
-            _Accuracy            = accuracy;
+            _LeftBottomMapCorner     = leftBottomMapCorner;
+            _RightUpperMapCorner     = rightUpperMapCorner;
+            AgentRadius              = agentRadius;
+            _Obstacles               = new List<NavElement>();
+            _Surfaces                = new List<NavElement>();
+            _ClipperOffset           = new ClipperOffset();
+            _ExitExtendPoints        = new List<List<IntPoint>>();
+            elementsGroups           = new List<ElementsGroup>();
+            _Connections             = new Dictionary<Tuple<NavPoint, NavPoint>, ConnectionData>();
+            _NavPoints               = new List<NavPoint>();
+            _TmpGroupedElements      = new HashSet<NavElement>();
+            _TmpLocalGroupedElements = new List<NavElement>();
+            _TmpCollidedElements     = new Queue<NavElement>();
+            _TmpSearchList           = new List<NavElement>();
+            _TmpElementsGroups       = new Dictionary<uint, ElementsGroup>();
+            elementsGroupPull        = new Stack<ElementsGroup>();
+            clipper                  = new Clipper();
+            polyTree                 = new PolyTree();
+            QuadTree                 = new QuadTree<NavElement>(10, 6, GetQuadTreeBounds(_LeftBottomMapCorner, _RightUpperMapCorner));
+            _Accuracy                = accuracy;
+            _NextElementsGroupId     = 1;
         }
 
         #endregion Init Methods
@@ -179,6 +194,7 @@ namespace DeusaldNav2D
                 _Surfaces.Remove(navElement);
             }
 
+            navElement.SetDirtyElementGroup();
             InnerUpdate(true);
         }
 
@@ -265,8 +281,13 @@ namespace DeusaldNav2D
         private void InnerUpdate(bool skipRefreshNavElement)
         {
             QuadTree.Clear();
+            RefreshNavElements(skipRefreshNavElement);
+            RebuildElementGroup();
+            RebuildNavPoints();
+        }
 
-
+        private void RefreshNavElements(bool skipRefreshNavElement)
+        {
             foreach (var obstacle in _Obstacles)
             {
                 if (_AreObstaclesDirty && !skipRefreshNavElement)
@@ -286,31 +307,36 @@ namespace DeusaldNav2D
             }
 
             _AreSurfacesDirty = false;
+        }
 
-            HashSet<NavElement> groupedElements = new HashSet<NavElement>();
+        private void RebuildElementGroup()
+        {
+            _TmpGroupedElements.Clear();
+
+            foreach (var elementsGroup in elementsGroups)
+                _TmpElementsGroups.Add(elementsGroup.Id, elementsGroup);
+            
             elementsGroups.Clear();
 
             foreach (var obstacle in _Obstacles)
             {
-                if (groupedElements.Contains(obstacle)) continue;
-                obstacle.RebuildTheElementGroup(ref groupedElements);
+                if (_TmpGroupedElements.Contains(obstacle)) continue;
+                obstacle.RebuildTheElementGroup(_TmpGroupedElements, _TmpLocalGroupedElements, _TmpCollidedElements, _TmpSearchList, _TmpElementsGroups);
             }
 
             foreach (var surface in _Surfaces)
             {
-                if (groupedElements.Contains(surface)) continue;
-                surface.RebuildTheElementGroup(ref groupedElements);
+                if (_TmpGroupedElements.Contains(surface)) continue;
+                surface.RebuildTheElementGroup(_TmpGroupedElements, _TmpLocalGroupedElements, _TmpCollidedElements, _TmpSearchList, _TmpElementsGroups);
             }
 
-            RebuildNavPoints();
-        }
-
-        private void AddToConnectionDictionary(NavPoint first, NavPoint second)
-        {
-            if (first.Id < second.Id)
-                _Connections.Add(new Tuple<NavPoint, NavPoint>(first, second), new ConnectionData());
-            else
-                _Connections.Add(new Tuple<NavPoint, NavPoint>(second, first), new ConnectionData());
+            foreach (var unusedElementsGroup in _TmpElementsGroups.Values)
+            {
+                unusedElementsGroup.Clear();
+                elementsGroupPull.Push(unusedElementsGroup);
+            }
+            
+            _TmpElementsGroups.Clear();
         }
 
         private void RebuildNavPoints()
@@ -320,7 +346,7 @@ namespace DeusaldNav2D
             _ConnectionOrderId = 0;
             CreateEdgePoints();
         }
-
+        
         private void CreateEdgePoints()
         {
             foreach (var element in elementsGroups)
@@ -353,7 +379,7 @@ namespace DeusaldNav2D
                 }
             }
         }
-
+        
         private void FillTheEdgePoints(ref NavShape navShape, ref HashSet<NavPoint> forbiddenConnection)
         {
             NavPoint lastPoint     = new NavPoint(_ConnectionOrderId++, navShape.Points[navShape.Points.Length - 1], forbiddenConnection);
@@ -376,6 +402,14 @@ namespace DeusaldNav2D
             lastPoint.Neighbours.Add(previousPoint);
             AddToConnectionDictionary(previousPoint, lastPoint);
             forbiddenConnection.Add(lastPoint);
+        }
+        
+        private void AddToConnectionDictionary(NavPoint first, NavPoint second)
+        {
+            if (first.Id < second.Id)
+                _Connections.Add(new Tuple<NavPoint, NavPoint>(first, second), new ConnectionData());
+            else
+                _Connections.Add(new Tuple<NavPoint, NavPoint>(second, first), new ConnectionData());
         }
 
         #endregion Private Methods

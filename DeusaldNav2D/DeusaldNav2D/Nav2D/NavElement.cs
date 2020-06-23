@@ -61,6 +61,7 @@ namespace DeusaldNav2D
         internal event EventHandler<CostChangedData> CostChanged;
 
         internal Vector2[] navElementPoints;
+        internal uint      elementsGroupId;
 
         internal readonly List<IntPoint> intNavElementPoints;
 
@@ -137,8 +138,8 @@ namespace DeusaldNav2D
             }
         }
 
-        public Vector2 BottomBoundingBox { get; private set; }
-        public Vector2 TopBoundingBox    { get; private set; }
+        public Vector2 BottomBoundingBox { get; }
+        public Vector2 TopBoundingBox    { get; }
         public Type    NavType           { get; }
         public Quad    Bounds            => _Bounds;
 
@@ -162,6 +163,9 @@ namespace DeusaldNav2D
             NavType             = type;
             _IsDirty            = true;
             _IsExtendDirty      = true;
+            BottomBoundingBox   = Vector2.Zero;
+            TopBoundingBox      = Vector2.Zero;
+            elementsGroupId     = 0;
 
             if (originalPoints.Length < 3)
                 throw new Exception("Can't create polygon shape with less than 3 vertex!");
@@ -186,16 +190,14 @@ namespace DeusaldNav2D
             RebuildNavElementPoints();
         }
 
-        internal void RebuildTheElementGroup(ref HashSet<NavElement> groupedElements)
+        internal void RebuildTheElementGroup(HashSet<NavElement> groupedElements, List<NavElement> localGroupedElements, Queue<NavElement> collidedElements,
+            List<NavElement> searchList, Dictionary<uint, ElementsGroup> oldElementsGroup)
         {
-            ElementsGroup newGroup = new ElementsGroup(_Nav2D);
-            _Nav2D.elementsGroups.Add(newGroup);
+            localGroupedElements.Clear();
+            collidedElements.Clear();
 
-            newGroup.AddElement(this);
             groupedElements.Add(this);
-
-            Queue<NavElement> collidedElements = new Queue<NavElement>();
-            List<NavElement>  searchList       = new List<NavElement>();
+            localGroupedElements.Add(this);
             collidedElements.Enqueue(this);
 
             while (collidedElements.Count != 0)
@@ -207,14 +209,34 @@ namespace DeusaldNav2D
                 {
                     if (groupedElements.Contains(otherElement)) continue;
 
-                    newGroup.AddElement(otherElement);
+                    localGroupedElements.Add(otherElement);
                     groupedElements.Add(otherElement);
-
                     collidedElements.Enqueue(otherElement);
                 }
             }
 
-            newGroup.Build();
+            if (elementsGroupId == 0 || oldElementsGroup[elementsGroupId].isDirty || oldElementsGroup[elementsGroupId].NumberOfElements != localGroupedElements.Count)
+            {
+                ElementsGroup newGroup = _Nav2D.elementsGroupPull.Count == 0 ? new ElementsGroup(_Nav2D) : _Nav2D.elementsGroupPull.Pop();
+                newGroup.AddElements(localGroupedElements);
+                _Nav2D.elementsGroups.Add(newGroup);
+                newGroup.Build();
+            }
+            else
+            {
+                _Nav2D.elementsGroups.Add(oldElementsGroup[elementsGroupId]);
+                oldElementsGroup.Remove(elementsGroupId);
+            }
+        }
+
+        internal void SetDirtyElementGroup()
+        {
+            foreach (var elementsGroup in _Nav2D.elementsGroups)
+            {
+                if (elementsGroup.Id != elementsGroupId) continue;
+                elementsGroup.isDirty = true;
+                return;
+            }
         }
 
         #endregion Public Methods
@@ -316,6 +338,7 @@ namespace DeusaldNav2D
                 intNavElementPoints.Add(_Nav2D.ParseToIntPoint(point));
 
             _IsDirty = false;
+            SetDirtyElementGroup();
             NavElementPointsRefreshed?.Invoke(this, EventArgs.Empty);
         }
 
