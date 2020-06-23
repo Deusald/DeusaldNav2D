@@ -306,8 +306,8 @@ namespace DeusaldNav2D
                 maxY                = MathF.Max(maxY, translated.y);
             }
 
-            BottomBoundingBox = new Vector2(minX, minY);
-            TopBoundingBox    = new Vector2(maxX, maxY);
+            BottomBoundingBox.Set(minX, minY);
+            TopBoundingBox.Set(maxX, maxY);
             _Bounds.Set(BottomBoundingBox, TopBoundingBox);
 
             intNavElementPoints.Clear();
