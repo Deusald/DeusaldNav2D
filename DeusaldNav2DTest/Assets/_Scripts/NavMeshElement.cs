@@ -11,7 +11,8 @@ namespace DeusaldNav2DTest
 
         #pragma warning disable 0649
 
-        [SerializeField] private float _ExtraOffset;
+        [SerializeField] private float   _ExtraOffset;
+        [SerializeField] private Vector2 _NewPosition;
 
         #pragma warning restore 0649
 
@@ -110,6 +111,12 @@ namespace DeusaldNav2DTest
             _NavElement.NavElementPointsRefreshed -= RefreshPoints;
             _MainNav.Nav2D.RemoveNavElement(_NavElement);
             Destroy(gameObject);
+        }
+
+        [Button]
+        private void ApplyNewPosition()
+        {
+            _Transform.position = _NewPosition;
         }
 
         #endregion Private Methods

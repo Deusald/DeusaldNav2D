@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using DeusaldNav2D;
+using JetBrains.Annotations;
 using NaughtyAttributes;
 using UnityEngine;
 
@@ -31,12 +32,18 @@ namespace DeusaldNav2DTest
 
         [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
         private Vector2 _SpawnPosition;
-        
+
+        [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
+        private float _SpawnRotation;
+
         [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
         private bool _IsObstacle;
 
         [SerializeField, ShowIf(nameof(IsPlayModeOnAndNotObstacle)), BoxGroup(_CreateNavElementGroup)]
         private float _Cost;
+
+        [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
+        private float _ExtraOffset;
 
         [SerializeField, ShowIf(nameof(IsPlayModeOn)), BoxGroup(_CreateNavElementGroup)]
         private float _Width;
@@ -67,7 +74,8 @@ namespace DeusaldNav2DTest
 
         private void Awake()
         {
-            Nav2D = new Nav2D(ToVec2(_LeftBottomMapCorner), ToVec2(_RightUpperMapCorner), _AgentRadius, _Accuracy);
+            Nav2D          =  new Nav2D(ToVec2(_LeftBottomMapCorner), ToVec2(_RightUpperMapCorner), _AgentRadius, _Accuracy);
+            Nav2D.DebugLog += Debug.Log;
         }
 
         private void Update()
@@ -86,12 +94,12 @@ namespace DeusaldNav2DTest
             Gizmos.DrawLine(rightBottomMapCorner, _LeftBottomMapCorner);
             Gizmos.DrawLine(_LeftBottomMapCorner, leftUpperMapCorner);
             Gizmos.color = Color.white;
-            
+
             if (Nav2D == null) return;
-            
+
             //Nav Points
             Gizmos.color = Color.cyan;
-            
+
             foreach (var navPoint in Nav2D.DebugNavPoints)
                 Gizmos.DrawSphere(ToVec2(navPoint.Position), 0.1f);
 
@@ -126,7 +134,7 @@ namespace DeusaldNav2DTest
             return Application.isPlaying && !_IsObstacle;
         }
 
-        [Button, ShowIf(nameof(IsPlayModeOn))]
+        [Button, ShowIf(nameof(IsPlayModeOn)), UsedImplicitly]
         private void CreateBox()
         {
             List<DeusaldSharp.Vector2> points = new List<DeusaldSharp.Vector2>();
@@ -147,7 +155,7 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(points.ToArray(), ToVec2(_SpawnPosition), 0f);
+                NavElement element       = Nav2D.AddObstacle(points.ToArray(), ToVec2(_SpawnPosition), _SpawnRotation, _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
@@ -159,13 +167,13 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(points.ToArray(), ToVec2(_SpawnPosition), 0f, _Cost);
+                NavElement element       = Nav2D.AddSurface(points.ToArray(), ToVec2(_SpawnPosition), _SpawnRotation, _Cost, _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
         }
 
-        [Button, ShowIf(nameof(IsPlayModeOn))]
+        [Button, ShowIf(nameof(IsPlayModeOn)), UsedImplicitly]
         private void CreateCircle()
         {
             if (_Radius < 0f)
@@ -176,7 +184,7 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(_Radius, ToVec2(_SpawnPosition), 0f);
+                NavElement element       = Nav2D.AddObstacle(_Radius, ToVec2(_SpawnPosition), _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
@@ -188,13 +196,13 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(_Radius, ToVec2(_SpawnPosition), 0f, _Cost);
+                NavElement element       = Nav2D.AddSurface(_Radius, ToVec2(_SpawnPosition), _Cost, _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
         }
 
-        [Button, ShowIf(nameof(IsPlayModeOn))]
+        [Button, ShowIf(nameof(IsPlayModeOn)), UsedImplicitly]
         private void CreatePolygon()
         {
             DeusaldSharp.Vector2[] points = new DeusaldSharp.Vector2[_Points.Length];
@@ -204,7 +212,7 @@ namespace DeusaldNav2DTest
 
             if (_IsObstacle)
             {
-                NavElement element       = Nav2D.AddObstacle(points, ToVec2(_SpawnPosition), 0f);
+                NavElement element       = Nav2D.AddObstacle(points, ToVec2(_SpawnPosition), _SpawnRotation, _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
@@ -216,7 +224,7 @@ namespace DeusaldNav2DTest
                     return;
                 }
 
-                NavElement element       = Nav2D.AddSurface(points, ToVec2(_SpawnPosition), 0f, _Cost);
+                NavElement element       = Nav2D.AddSurface(points, ToVec2(_SpawnPosition), _SpawnRotation, _Cost, _ExtraOffset);
                 GameObject elementObject = Instantiate(_NavMeshElementObject, _SpawnPosition, Quaternion.identity);
                 elementObject.GetComponent<NavMeshElement>().Init(element, this);
             }
