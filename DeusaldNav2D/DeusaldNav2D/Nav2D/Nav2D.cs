@@ -29,7 +29,6 @@ using QuadTree;
 
 namespace DeusaldNav2D
 {
-    //Todo: add optimization for building groups
     public class Nav2D
     {
         #region Types
@@ -53,14 +52,14 @@ namespace DeusaldNav2D
         #if DEBUG
         #pragma warning disable 67
 
-        public event Action<string> DebugLog;
+        public Action<string> DebugLog;
 
         #pragma warning restore 67
         #endif
 
-        internal readonly List<ElementsGroup> elementsGroups;
-        internal readonly Clipper             clipper;
-        internal readonly PolyTree            polyTree;
+        internal readonly List<ElementsGroup>  elementsGroups;
+        internal readonly Clipper              clipper;
+        internal readonly PolyTree             polyTree;
         internal readonly Stack<ElementsGroup> elementsGroupPull;
 
         private bool                 _AreObstaclesDirty;
@@ -82,6 +81,8 @@ namespace DeusaldNav2D
         private readonly Queue<NavElement>                                     _TmpCollidedElements;
         private readonly List<NavElement>                                      _TmpSearchList;
         private readonly Dictionary<uint, ElementsGroup>                       _TmpElementsGroups;
+
+        private const float _MinWorldAreaSize = 1f;
 
         #endregion Variables
 
@@ -110,6 +111,9 @@ namespace DeusaldNav2D
 
         public Nav2D(Vector2 leftBottomMapCorner, Vector2 rightUpperMapCorner, float agentRadius, Accuracy accuracy)
         {
+            if (new Quad(leftBottomMapCorner, rightUpperMapCorner).Area() < _MinWorldAreaSize)
+                throw new Exception("World is too small! The world minimum area is 1 m^2");
+
             _LeftBottomMapCorner     = leftBottomMapCorner;
             _RightUpperMapCorner     = rightUpperMapCorner;
             AgentRadius              = agentRadius;
@@ -315,7 +319,7 @@ namespace DeusaldNav2D
 
             foreach (var elementsGroup in elementsGroups)
                 _TmpElementsGroups.Add(elementsGroup.Id, elementsGroup);
-            
+
             elementsGroups.Clear();
 
             foreach (var obstacle in _Obstacles)
@@ -335,7 +339,7 @@ namespace DeusaldNav2D
                 unusedElementsGroup.Clear();
                 elementsGroupPull.Push(unusedElementsGroup);
             }
-            
+
             _TmpElementsGroups.Clear();
         }
 
@@ -346,7 +350,7 @@ namespace DeusaldNav2D
             _ConnectionOrderId = 0;
             CreateEdgePoints();
         }
-        
+
         private void CreateEdgePoints()
         {
             foreach (var element in elementsGroups)
@@ -379,7 +383,7 @@ namespace DeusaldNav2D
                 }
             }
         }
-        
+
         private void FillTheEdgePoints(ref NavShape navShape, ref HashSet<NavPoint> forbiddenConnection)
         {
             NavPoint lastPoint     = new NavPoint(_ConnectionOrderId++, navShape.Points[navShape.Points.Length - 1], forbiddenConnection);
@@ -403,7 +407,7 @@ namespace DeusaldNav2D
             AddToConnectionDictionary(previousPoint, lastPoint);
             forbiddenConnection.Add(lastPoint);
         }
-        
+
         private void AddToConnectionDictionary(NavPoint first, NavPoint second)
         {
             if (first.Id < second.Id)

@@ -472,5 +472,13 @@ namespace QuadTree
         {
             return x > MinX && y > MinY && x < MaxX && y < MaxY;
         }
+
+        /// <summary>
+        /// Get the are size of an Quad
+        /// </summary>
+        public float Area()
+        {
+            return MathF.Abs(MinX - MaxX) * MathF.Abs(MinY - MaxY);
+        }
     }
 }

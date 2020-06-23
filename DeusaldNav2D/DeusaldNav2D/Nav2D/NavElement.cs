@@ -74,9 +74,13 @@ namespace DeusaldNav2D
         private List<IntPoint> _EnterExtendPoints;
         private float          _Cost;
         private Quad           _Bounds;
+        private Vector2        _BottomBoundingBox;
+        private Vector2        _TopBoundingBox;
 
         private readonly Vector2[] _OriginalPoints;
         private readonly Nav2D     _Nav2D;
+
+        private const float _MinAreaOfNavElement = 0.01f;
 
         #endregion Variables
 
@@ -138,10 +142,10 @@ namespace DeusaldNav2D
             }
         }
 
-        public Vector2 BottomBoundingBox { get; }
-        public Vector2 TopBoundingBox    { get; }
-        public Type    NavType           { get; }
+        public Vector2 BottomBoundingBox => _BottomBoundingBox;
+        public Vector2 TopBoundingBox    => _TopBoundingBox;
         public Quad    Bounds            => _Bounds;
+        public Type    NavType           { get; }
 
         #endregion Properties
 
@@ -163,8 +167,8 @@ namespace DeusaldNav2D
             NavType             = type;
             _IsDirty            = true;
             _IsExtendDirty      = true;
-            BottomBoundingBox   = Vector2.Zero;
-            TopBoundingBox      = Vector2.Zero;
+            _BottomBoundingBox  = Vector2.Zero;
+            _TopBoundingBox     = Vector2.Zero;
             elementsGroupId     = 0;
 
             if (originalPoints.Length < 3)
@@ -328,9 +332,12 @@ namespace DeusaldNav2D
                 maxY                = MathF.Max(maxY, translated.y);
             }
 
-            BottomBoundingBox.Set(minX, minY);
-            TopBoundingBox.Set(maxX, maxY);
-            _Bounds.Set(BottomBoundingBox, TopBoundingBox);
+            _BottomBoundingBox.Set(minX, minY);
+            _TopBoundingBox.Set(maxX, maxY);
+            _Bounds.Set(_BottomBoundingBox, _TopBoundingBox);
+            _Nav2D.DebugLog?.Invoke(_Bounds.Area().ToString());
+            if (_Bounds.Area() < _MinAreaOfNavElement)
+                throw new Exception("The area of an object is too small!");
 
             intNavElementPoints.Clear();
 
